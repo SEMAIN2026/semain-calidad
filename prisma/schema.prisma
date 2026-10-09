@@ -1,7 +1,6 @@
 // Prisma schema - Semain Calidad
 // Uses libsql driver adapter (works with both local file: URLs and Turso libsql:// URLs)
 // Connection is configured at runtime in src/lib/db.ts via @prisma/adapter-libsql.
-// For prisma db push / migrate, see prisma.config.ts.
 
 generator client {
   provider = "prisma-client-js"
