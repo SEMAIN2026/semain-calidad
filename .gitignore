@@ -48,3 +48,21 @@ prisma/migrations/dev/
 dev.log
 server.log
 *.log
+
+# Skills and internal tooling (not part of the app)
+/skills/
+/tests/
+/.zscripts/
+/download/
+/Caddyfile
+/examples/
+/.turso/
+/tool-results/
+
+# Prisma generated client (regenerated on install)
+/node_modules/.prisma/
+
+# Build artifacts
+/.next/
+/build/
+/dist/

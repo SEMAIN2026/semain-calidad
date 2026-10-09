@@ -1,9 +1,11 @@
 // Prisma schema - Semain Calidad
-// Local dev: SQLite (file:./dev.db)
-// Production (Vercel + Turso): change DATABASE_URL to libsql://... and use @prisma/adapter-libsql
+// Uses libsql driver (works with both local file: URLs and Turso libsql:// URLs)
+// In production: DATABASE_URL=libsql://...&TURSO_AUTH_TOKEN=...
+// In local dev: DATABASE_URL=file:./db/dev.db
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
 }
 
 datasource db {
