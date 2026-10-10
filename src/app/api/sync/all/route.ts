@@ -3,9 +3,10 @@ import { db } from '@/lib/db'
 import { fetchPVs } from '@/lib/almacen-client'
 import {
   fetchShippings,
-  getMatchingText,
   extractPVReferences,
-  getShippingOutcome,
+  getItemDescriptions,
+  getShippingDate,
+  getTrackingInfo,
 } from '@/lib/shipping-client'
 
 export const dynamic = 'force-dynamic'
@@ -13,14 +14,15 @@ export const maxDuration = 300
 export const runtime = 'nodejs'
 
 /**
- * Unified sync: runs Almacén sync first, then Shipping sync, in one request.
+ * Unified sync: runs Almacén sync first, then Shipping sync.
  *
- * Almacén sync: fetches PVs and marks items as "embarque=x" if the PV appears
- * in Almacén's records (light touch — the main data source is the Excel import).
+ * Almacén sync: fetches PVs and marks items as "embarque=x" if their PV
+ * appears in Almacén's records.
  *
- * Shipping sync: fetches shipping records and matches them to CalidadItems
- * by PV number (extracted from the "producto" field) or by concepto substring.
- * Updates shippingDate, shippingStatus, guia, paqueteria.
+ * Shipping sync: fetches shipping records, extracts product descriptions
+ * from items[].pkg, finds PV number references, and matches against
+ * CalidadItems. Updates shippingDate, shippingStatus, guia, paqueteria.
+ * Determines a_tiempo/tarde by comparing ship_date with fechaEntregaEstimada.
  */
 export async function POST() {
   const startedAt = Date.now()
@@ -37,14 +39,10 @@ export async function POST() {
     const pvs = await fetchPVs()
     almacenResult.pvsFound = pvs.length
 
-    // For each PV in Almacén, mark the corresponding CalidadItems as embarque="x"
-    // (the PV exists in Almacén means it was received/processed)
     for (const pv of pvs) {
-      // Normalize PV number: Almacén uses "PV-1598" or "PV1598", Excel uses "PV 1290"
       const pvDigits = String(pv.pvNumber).replace(/\D/g, '')
       if (!pvDigits) continue
 
-      // Find CalidadItems whose pvNumber contains these digits
       const items = await db.calidadItem.findMany({
         where: { pvNumber: { contains: pvDigits } },
       })
@@ -68,7 +66,7 @@ export async function POST() {
       source: 'almacen',
       status: almacenResult.error ? 'error' : 'success',
       message: almacenResult.error
-        || `Sync OK: ${almacenResult.pvsFound} PVs en Almacén, ${almacenResult.updated} items marcados como embarcados`,
+        || `Sync OK: ${almacenResult.pvsFound} PVs en Almacén, ${almacenResult.updated} items marcados`,
       itemsCount: almacenResult.updated,
     },
   })
@@ -89,18 +87,31 @@ export async function POST() {
     const allItems = await db.calidadItem.findMany()
 
     for (const rec of records) {
-      const text = getMatchingText(rec)
-      const pvDigitsList = extractPVReferences(text)
-      const outcome = getShippingOutcome(rec)
+      const shipDate = getShippingDate(rec)
+      const { guia, paqueteria } = getTrackingInfo(rec)
+      const itemDescriptions = getItemDescriptions(rec)
 
-      if (!outcome.shipped) {
+      if (!shipDate) {
         shippingResult.notMatched++
         continue
       }
 
+      // Extract PV number digits from all item descriptions
+      const pvDigitsSet = new Set<string>()
+      for (const desc of itemDescriptions) {
+        const refs = extractPVReferences(desc)
+        refs.forEach(d => pvDigitsSet.add(d))
+      }
+
+      // Also try the company_display and notas fields
+      const extraText = [rec.company_display, rec.notas, rec.file_number]
+        .filter(Boolean).join(' ')
+      const extraRefs = extractPVReferences(extraText)
+      extraRefs.forEach(d => pvDigitsSet.add(d))
+
       // Find matching CalidadItems by PV number digits
       const matchedItems: typeof allItems = []
-      for (const digits of pvDigitsList) {
+      for (const digits of pvDigitsSet) {
         for (const it of allItems) {
           const itemDigits = String(it.pvNumber).replace(/\D/g, '')
           if (itemDigits === digits && !matchedItems.find(m => m.id === it.id)) {
@@ -109,14 +120,18 @@ export async function POST() {
         }
       }
 
-      // Fallback: match by concepto substring
-      if (!matchedItems.length) {
-        const productoText = String(rec.producto || '').toLowerCase()
-        if (productoText.length > 5) {
-          for (const it of allItems) {
-            const concepto = it.concepto.toLowerCase()
-            if (concepto && (concepto.includes(productoText) || productoText.includes(concepto))) {
-              matchedItems.push(it)
+      // Fallback: match by concepto substring against item descriptions
+      if (!matchedItems.length && itemDescriptions.length > 0) {
+        for (const it of allItems) {
+          const concepto = it.concepto.toLowerCase()
+          if (!concepto) continue
+          for (const desc of itemDescriptions) {
+            const descLower = desc.toLowerCase()
+            if (concepto.includes(descLower) || descLower.includes(concepto)) {
+              if (!matchedItems.find(m => m.id === it.id)) {
+                matchedItems.push(it)
+              }
+              break
             }
           }
         }
@@ -127,23 +142,23 @@ export async function POST() {
         continue
       }
 
-      // Determine onTime by comparing shipping date with estimated delivery
+      // Update each matched item
       for (const it of matchedItems) {
+        // Determine onTime: compare ship date with estimated delivery date
         let onTime = true
-        if (outcome.date && it.fechaEntregaEstimada) {
-          onTime = outcome.date <= it.fechaEntregaEstimada
+        if (shipDate && it.fechaEntregaEstimada) {
+          onTime = shipDate <= it.fechaEntregaEstimada
         }
         const newStatus = onTime ? 'a_tiempo' : 'tarde'
 
         await db.calidadItem.update({
           where: { id: it.id },
           data: {
-            shippingDate: outcome.date,
+            shippingDate: shipDate,
             shippingStatus: newStatus,
             shippingSynced: true,
-            guia: outcome.guia,
-            paqueteria: outcome.paqueteria,
-            // If shipped, also update estado to "Entregado"
+            guia: guia,
+            paqueteria: paqueteria,
             estado: 'Entregado',
             embarque: 'x',
           },
@@ -161,7 +176,7 @@ export async function POST() {
       source: 'shipping',
       status: shippingResult.error ? 'error' : 'success',
       message: shippingResult.error
-        || `Sync OK: ${shippingResult.totalRecords} registros, ${shippingResult.matched} items matcheados, ${shippingResult.notMatched} sin match`,
+        || `Sync OK: ${shippingResult.totalRecords} registros, ${shippingResult.matched} matcheados, ${shippingResult.notMatched} sin match`,
       itemsCount: shippingResult.matched,
     },
   })
