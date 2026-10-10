@@ -197,6 +197,14 @@ export async function POST() {
         const alreadyShipped = it.cantidadEnviada || 0
         if (alreadyShipped >= totalQty) continue
 
+        // ANTI-REPROCESS: if this item was already synced with the same shipping date,
+        // skip it (already processed in a previous sync run)
+        if (it.shippingSynced && it.shippingDate) {
+          const existingDate = new Date(it.shippingDate).toISOString().slice(0, 10)
+          const newDate = shipDate.toISOString().slice(0, 10)
+          if (existingDate === newDate) continue
+        }
+
         let onTime = true
         if (shipDate && it.fechaEntregaEstimada) {
           onTime = shipDate <= it.fechaEntregaEstimada
