@@ -246,39 +246,39 @@ export function PvsTab({
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
-          <div className="overflow-x-auto max-h-[65vh] overflow-y-auto">
-            <Table>
+          <div className="overflow-x-auto max-h-[70vh] overflow-y-auto">
+            <Table className="w-full min-w-[1400px]">
               <TableHeader className="sticky top-0 bg-background z-10">
                 <TableRow>
-                  <TableHead className="w-[90px]">PV</TableHead>
-                  <TableHead className="w-[40px]">#</TableHead>
-                  <TableHead className="min-w-[200px]">Concepto</TableHead>
-                  <TableHead className="min-w-[120px]">Cliente</TableHead>
-                  <TableHead className="w-[60px] text-right">Cant.</TableHead>
-                  <TableHead className="w-[90px]">Fecha PV</TableHead>
-                  <TableHead className="w-[80px]">TE</TableHead>
-                  <TableHead className="w-[90px]">Entrega est.</TableHead>
-                  <TableHead className="w-[70px] text-center">Días</TableHead>
-                  <TableHead className="w-[100px]">Estado</TableHead>
-                  <TableHead className="w-[90px]">Fecha envío</TableHead>
-                  <TableHead className="w-[90px]">Status envío</TableHead>
-                  <TableHead className="w-[80px]">Guía</TableHead>
-                  <TableHead className="w-[80px] text-right">Acciones</TableHead>
+                  <TableHead className="w-[100px] min-w-[100px]">PV</TableHead>
+                  <TableHead className="w-[40px] min-w-[40px]">#</TableHead>
+                  <TableHead className="min-w-[300px]">Concepto</TableHead>
+                  <TableHead className="min-w-[200px]">Cliente</TableHead>
+                  <TableHead className="w-[70px] min-w-[70px] text-right">Cant.</TableHead>
+                  <TableHead className="w-[100px] min-w-[100px]">Fecha PV</TableHead>
+                  <TableHead className="w-[110px] min-w-[110px]">TE</TableHead>
+                  <TableHead className="w-[100px] min-w-[100px]">Entrega est.</TableHead>
+                  <TableHead className="w-[80px] min-w-[80px] text-center">Días</TableHead>
+                  <TableHead className="w-[110px] min-w-[110px]">Estado</TableHead>
+                  <TableHead className="w-[100px] min-w-[100px]">Fecha envío</TableHead>
+                  <TableHead className="w-[110px] min-w-[110px]">Status envío</TableHead>
+                  <TableHead className="min-w-[140px]">Guía</TableHead>
+                  <TableHead className="w-[80px] min-w-[80px] text-right">Acciones</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filtered.map(it => (
                   <TableRow key={it.id} className={rowColorForEstado(it.estado, it.shippingStatus)}>
-                    <TableCell className="font-mono text-xs font-semibold">{it.pvNumber}</TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">{it.itemLine}</TableCell>
-                    <TableCell className="max-w-[300px]">
-                      <div className="truncate" title={it.concepto}>{it.concepto}</div>
+                    <TableCell className="font-mono text-xs font-semibold whitespace-nowrap">{it.pvNumber}</TableCell>
+                    <TableCell className="font-mono text-xs text-muted-foreground whitespace-nowrap">{it.itemLine}</TableCell>
+                    <TableCell>
+                      <div className="whitespace-normal break-words">{it.concepto}</div>
                       {it.clave && (
-                        <div className="text-[10px] text-muted-foreground font-mono">{it.clave}</div>
+                        <div className="text-[10px] text-muted-foreground font-mono whitespace-nowrap">{it.clave}</div>
                       )}
                     </TableCell>
-                    <TableCell className="max-w-[150px]">
-                      <div className="truncate text-xs" title={it.cliente || ''}>{it.cliente || '—'}</div>
+                    <TableCell>
+                      <div className="text-xs whitespace-normal break-words">{it.cliente || '—'}</div>
                     </TableCell>
                     <TableCell className="text-right tabular-nums">{it.cantidad}</TableCell>
                     <TableCell className="text-xs">{formatDate(it.fechaPv)}</TableCell>
@@ -324,7 +324,7 @@ export function PvsTab({
                         </Badge>
                       ) : '—'}
                     </TableCell>
-                    <TableCell className="text-xs font-mono truncate max-w-[80px]" title={it.guia || ''}>
+                    <TableCell className="text-xs font-mono whitespace-normal break-words">
                       {it.guia || '—'}
                     </TableCell>
                     <TableCell className="text-right">

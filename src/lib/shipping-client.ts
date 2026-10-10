@@ -171,13 +171,58 @@ export function getTrackingInfo(rec: ShippingRecord): { guia: string | null; paq
 }
 
 /**
+ * Extract all part numbers from a text string.
+ * A part number must:
+ *   - Be at least 5 chars long (to avoid matching "15", "20", etc.)
+ *   - Contain at least 2 consecutive digits OR a digit-letter pattern
+ * Examples that match: "53041184", "GH319-89180", "68777848AA", "5A69FE3"
+ * Examples that don't: "15", "20", "3D", "17-4", "1PC"
+ */
+function extractAllPartNumbers(text: string): string[] {
+  if (!text) return []
+  const lower = text.toLowerCase()
+  // Match tokens that look like real part numbers:
+  // - At least 5 chars total
+  // - At least 2 digits somewhere
+  const candidates = lower.match(/[a-z0-9][a-z0-9\-]{4,}/g) || []
+  return candidates.filter(m => {
+    const digitCount = (m.match(/\d/g) || []).length
+    return digitCount >= 2
+  })
+}
+
+/**
+ * Extract significant descriptive phrases from a concepto.
+ * For "SERVICIO TEMPLE | LOTE DE TRATAMIENTO TERMICO" returns:
+ *   ["lote de tratamiento termico", "tratamiento termico", "servicio temple"]
+ */
+function extractDescriptivePhrases(concepto: string): string[] {
+  if (!concepto) return []
+  const lower = concepto.toLowerCase()
+  const parts = lower.split('|').map(p => p.trim()).filter(p => p.length > 0)
+  const phrases: string[] = []
+  for (const part of parts) {
+    phrases.push(part)
+    // Also add without common prefixes
+    const cleaned = part.replace(/^(np|new|mandrel|mandril|gage|gauge|fixtura|servicio|cambio de ingenieria|retrabajo a?)\s+/gi, '').trim()
+    if (cleaned.length > 5 && cleaned !== part) {
+      phrases.push(cleaned)
+    }
+  }
+  return phrases
+}
+
+/**
  * Score-based matching between a CalidadItem concepto and a shipping product description.
  * Returns a score (0 = no match, higher = better match).
  *
- * Strategy:
- * 1. Extract part number from concepto (after " | ")
- * 2. Check if that part number appears in the shipping pkg
- * 3. Also check keyword overlap (mandril, fixtura, gauge, etc.)
+ * Strategy (multi-signal):
+ * 1. Part number overlap (strongest): extract all part numbers from both
+ *    texts and check for overlap.
+ * 2. Descriptive phrase match: the part after " | " in the concepto often
+ *    appears verbatim in the shipping pkg (e.g. "LOTE DE TRATAMIENTO TERMICO").
+ * 3. Keyword overlap (mandril, fixtura, gauge, etc.).
+ * 4. Direct substring match.
  */
 export function matchScore(concepto: string, shippingPkg: string): number {
   if (!concepto || !shippingPkg) return 0
@@ -187,31 +232,58 @@ export function matchScore(concepto: string, shippingPkg: string): number {
 
   let score = 0
 
-  // 1. Part number match (strongest signal)
-  const partNum = extractPartNumberFromConcepto(concepto).toLowerCase()
-  if (partNum && partNum.length >= 3) {
-    // Clean the part number of common words
-    const cleanPart = partNum.replace(/^(np|mandrel|mandril|new|gage|fixtura)\s+/gi, '').trim()
-    if (cleanPart.length >= 3 && p.includes(cleanPart)) {
-      score += 100
-    }
-    // Also try the raw part number
-    if (p.includes(partNum)) {
-      score += 80
+  // 1. Part number overlap (strongest signal)
+  const conceptoParts = extractAllPartNumbers(c)
+  const pkgParts = extractAllPartNumbers(p)
+  // Use only part numbers with at least 6 chars for partial matching
+  // (shorter ones like "18-715" are ambiguous)
+  for (const cp of conceptoParts) {
+    for (const pp of pkgParts) {
+      if (cp.length < 6 || pp.length < 6) continue
+      // Exact match
+      if (cp === pp) {
+        score += 150
+      }
+      // One contains the other — require the shorter one to be at least 6 chars
+      else if (pp.includes(cp) && cp.length >= 7) {
+        score += 120
+      } else if (cp.includes(pp) && pp.length >= 7) {
+        score += 120
+      }
     }
   }
 
-  // 2. Keyword overlap
-  const keywords = ['mandril', 'mandrel', 'fixtura', 'gage', 'gauge', 'ventana', 'horquilla', 'pokayoke', 'retrabajo']
+  // 2. Descriptive phrase match
+  // Only count phrases if they're specific enough (not just generic type names)
+  // AND either there are no part numbers, or part numbers also match
+  const hasConceptoParts = conceptoParts.length > 0
+  const hasPkgParts = pkgParts.length > 0
+  const partsMatched = score >= 100 // part number match already found
+  const phrases = extractDescriptivePhrases(concepto)
+  for (const phrase of phrases) {
+    if (phrase.length < 6) continue
+    if (!p.includes(phrase)) continue
+    // Skip generic type-only phrases (they cause false positives)
+    // e.g. "mandril sin tapas" is too generic if both have different part numbers
+    const isGenericPhrase = /^(mandril|mandrel|fixtura|gage|gauge|ventana|horquilla|servicio|cambio de ingenieria|retrabajo|tapa|tapas|sin tapas|con tapas|sin tap|con tap)/i.test(phrase)
+    if (isGenericPhrase && hasConceptoParts && hasPkgParts && !partsMatched) {
+      // Both have part numbers but they don't match — skip generic phrase bonus
+      continue
+    }
+    score += 80
+  }
+
+  // 3. Keyword overlap (weaker signal, just to help when no part numbers)
+  const keywords = ['mandril', 'mandrel', 'fixtura', 'gage', 'gauge', 'ventana', 'horquilla', 'pokayoke', 'retrabajo', 'temple', 'tratamiento termico', 'tapas inoxidable', 'servicio', 'calibracion', 'impresion', 'placa', 'material diverso', 'herramientas diversas']
   for (const kw of keywords) {
     if (c.includes(kw) && p.includes(kw)) {
-      score += 10
+      score += 15
     }
   }
 
-  // 3. Direct substring match (either direction, min 8 chars to avoid false positives)
-  if (c.length >= 8 && p.includes(c)) score += 50
-  if (p.length >= 8 && c.includes(p)) score += 50
+  // 4. Direct substring match (min 10 chars to avoid false positives)
+  if (c.length >= 10 && p.includes(c)) score += 60
+  if (p.length >= 10 && c.includes(p)) score += 60
 
   return score
 }
