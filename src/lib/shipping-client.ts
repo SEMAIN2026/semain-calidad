@@ -2,21 +2,22 @@
  * Shipping Notice API client (read-only).
  * Source: https://semain-shipping-notice.vercel.app
  *
- * Auth mechanism: POST /api/auth/login sets a `semain_session` HttpOnly cookie.
- * We capture and reuse that cookie for all subsequent requests.
+ * Auth: cookie-based (semain_session HttpOnly cookie).
  *
- * Record structure (from API):
- * {
- *   id, file_number, ship_date, company, company_display,
- *   receiver_names, plant, street, district, city, zip,
- *   courier, tracking, tracking_url,
+ * Record structure:
+ * { id, file_number, ship_date, company, company_display,
+ *   receiver_names, plant, courier, tracking, tracking_url,
  *   items: [{ qty, um, pkg, po, invoice }],  // pkg = product description
- *   link3d, links, product_image, saved_at,
- *   guides_json, client_id, ship_date_fin, notas, link3d_list,
- *   guides: [{ paqueteria, guia, url_rastreo }]
- * }
+ *   guides: [{ paqueteria, guia, url_rastreo }], ... }
  *
- * IMPORTANT: We ONLY read from this API. We never modify any data.
+ * Product format examples (from real data):
+ *   "MANDRIL SIN TAPON M-68777046AB-A SS17-4PH"
+ *   "MANDREL GH319-89180 (17-4PH) rezago"
+ *   "NEW GAUGE FINAL 68777848AA SENSORES"
+ *   "Retrabajo a Gage NP 5A69FE3"
+ *
+ * Excel concepto format: "MANDRIL SIN TAPAS | 18-715A"
+ *   -> the part after " | " is the part number to match against.
  */
 
 const SHIPPING_BASE = process.env.SHIPPING_BASE_URL || 'https://semain-shipping-notice.vercel.app'
@@ -28,7 +29,7 @@ let cachedCookie: { cookie: string; expires: number } | null = null
 export interface ShippingItem {
   qty?: string | number
   um?: string
-  pkg?: string  // Product description — this is what we match against
+  pkg?: string
   po?: string
   invoice?: string
 }
@@ -72,14 +73,12 @@ async function login(): Promise<string> {
     const text = await res.text().catch(() => '')
     throw new Error(`Shipping login failed: ${res.status} ${text}`)
   }
-  // Extract the Set-Cookie header
   const setCookie = res.headers.get('set-cookie') || ''
   const match = setCookie.match(/semain_session=([^;]+)/)
   if (!match) {
     throw new Error('Shipping login: no semain_session cookie in response')
   }
   const cookie = `semain_session=${match[1]}`
-  // Cache for 7 hours (cookie expires in 8h)
   cachedCookie = { cookie, expires: Date.now() + 7 * 60 * 60 * 1000 }
   return cookie
 }
@@ -109,7 +108,6 @@ async function authedGet(path: string): Promise<any> {
   return res.json()
 }
 
-/** Get all shipping records. */
 export async function fetchShippings(): Promise<ShippingRecord[]> {
   let data: any
   try {
@@ -124,15 +122,23 @@ export async function fetchShippings(): Promise<ShippingRecord[]> {
   return []
 }
 
-/** Extract PV number digits from a text string.
- *  Matches "PV 1290", "PV1290", "P.V. 1290", "PV-1290" etc. */
+/** Extract PV number digits from text. Matches "PV 1290", "PV1290", "P.V. 1290". */
 export function extractPVReferences(text: string): string[] {
   if (!text) return []
   const matches = text.match(/p\.?\s*v\.?\s*[-]?\s*\d+/gi) || []
-  return matches.map(m => {
-    const digits = m.match(/\d+/)?.[0] || ''
-    return digits
-  }).filter(Boolean)
+  return matches.map(m => m.match(/\d+/)?.[0] || '').filter(Boolean)
+}
+
+/** Extract the part number from an Excel concepto.
+ *  Concepto format: "MANDRIL SIN TAPAS | 18-715A" -> returns "18-715A"
+ *  If no " | " separator, returns the whole string. */
+export function extractPartNumberFromConcepto(concepto: string): string {
+  if (!concepto) return ''
+  const parts = concepto.split('|').map(p => p.trim())
+  // The part number is typically after the last " | "
+  const afterPipe = parts[parts.length - 1] || concepto
+  // Remove common prefixes like "NP ", "MANDREL ", etc to get the raw part number
+  return afterPipe
 }
 
 /** Get all product descriptions (pkg) from a shipping record's items. */
@@ -143,7 +149,6 @@ export function getItemDescriptions(rec: ShippingRecord): string[] {
     .filter((s): s is string => !!s && typeof s === 'string')
 }
 
-/** Get the shipping date as a Date object. */
 export function getShippingDate(rec: ShippingRecord): Date | null {
   const dateStr = rec.ship_date || rec.saved_at
   if (!dateStr) return null
@@ -151,9 +156,7 @@ export function getShippingDate(rec: ShippingRecord): Date | null {
   return isNaN(d.getTime()) ? null : d
 }
 
-/** Get the tracking number and courier from a shipping record. */
 export function getTrackingInfo(rec: ShippingRecord): { guia: string | null; paqueteria: string | null } {
-  // Try guides array first
   if (rec.guides && rec.guides.length > 0) {
     const g = rec.guides[0]
     return {
@@ -165,4 +168,50 @@ export function getTrackingInfo(rec: ShippingRecord): { guia: string | null; paq
     guia: rec.tracking || null,
     paqueteria: rec.courier || null,
   }
+}
+
+/**
+ * Score-based matching between a CalidadItem concepto and a shipping product description.
+ * Returns a score (0 = no match, higher = better match).
+ *
+ * Strategy:
+ * 1. Extract part number from concepto (after " | ")
+ * 2. Check if that part number appears in the shipping pkg
+ * 3. Also check keyword overlap (mandril, fixtura, gauge, etc.)
+ */
+export function matchScore(concepto: string, shippingPkg: string): number {
+  if (!concepto || !shippingPkg) return 0
+  const c = concepto.toLowerCase().trim()
+  const p = shippingPkg.toLowerCase().trim()
+  if (!c || !p) return 0
+
+  let score = 0
+
+  // 1. Part number match (strongest signal)
+  const partNum = extractPartNumberFromConcepto(concepto).toLowerCase()
+  if (partNum && partNum.length >= 3) {
+    // Clean the part number of common words
+    const cleanPart = partNum.replace(/^(np|mandrel|mandril|new|gage|fixtura)\s+/gi, '').trim()
+    if (cleanPart.length >= 3 && p.includes(cleanPart)) {
+      score += 100
+    }
+    // Also try the raw part number
+    if (p.includes(partNum)) {
+      score += 80
+    }
+  }
+
+  // 2. Keyword overlap
+  const keywords = ['mandril', 'mandrel', 'fixtura', 'gage', 'gauge', 'ventana', 'horquilla', 'pokayoke', 'retrabajo']
+  for (const kw of keywords) {
+    if (c.includes(kw) && p.includes(kw)) {
+      score += 10
+    }
+  }
+
+  // 3. Direct substring match (either direction, min 8 chars to avoid false positives)
+  if (c.length >= 8 && p.includes(c)) score += 50
+  if (p.length >= 8 && c.includes(p)) score += 50
+
+  return score
 }

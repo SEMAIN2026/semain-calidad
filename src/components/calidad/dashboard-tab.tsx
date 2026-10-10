@@ -49,13 +49,14 @@ export function DashboardTab({
   return (
     <div className="space-y-6">
       {/* Stat cards */}
-      <section className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      <section className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-3">
         <StatCard icon={<Package className="h-4 w-4" />} label="Total partidas" value={data.total} tone="default" />
         <StatCard icon={<CheckCircle2 className="h-4 w-4" />} label="Entregados" value={data.entregado} tone="green" />
-        <StatCard icon={<XCircle className="h-4 w-4" />} label="Atrasados" value={data.atrasado} tone="red" />
+        <StatCard icon={<XCircle className="h-4 w-4" />} label="Retrasados" value={data.atrasado} tone="red" />
         <StatCard icon={<AlertTriangle className="h-4 w-4" />} label="Por vencer" value={data.porVencer} tone="yellow" />
         <StatCard icon={<Clock className="h-4 w-4" />} label="En tiempo" value={data.enTiempo} tone="blue" />
-        <StatCard icon={<TrendingUp className="h-4 w-4" />} label="% a tiempo" value={`${data.onTimeRate}%`} tone="green" />
+        <StatCard icon={<TrendingUp className="h-4 w-4" />} label="Env. a tiempo" value={data.shippedOnTime} tone="green" />
+        <StatCard icon={<Clock className="h-4 w-4" />} label="Env. tarde" value={data.shippedLate} tone="lime" />
       </section>
 
       {/* Sync status */}

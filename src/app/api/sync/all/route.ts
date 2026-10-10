@@ -7,6 +7,7 @@ import {
   getItemDescriptions,
   getShippingDate,
   getTrackingInfo,
+  matchScore,
 } from '@/lib/shipping-client'
 
 export const dynamic = 'force-dynamic'
@@ -120,19 +121,25 @@ export async function POST() {
         }
       }
 
-      // Fallback: match by concepto substring against item descriptions
+      // Fallback: score-based matching by concepto vs item descriptions
       if (!matchedItems.length && itemDescriptions.length > 0) {
+        const scored: { item: typeof allItems[0]; score: number }[] = []
         for (const it of allItems) {
-          const concepto = it.concepto.toLowerCase()
-          if (!concepto) continue
+          if (!it.concepto) continue
+          let bestScore = 0
           for (const desc of itemDescriptions) {
-            const descLower = desc.toLowerCase()
-            if (concepto.includes(descLower) || descLower.includes(concepto)) {
-              if (!matchedItems.find(m => m.id === it.id)) {
-                matchedItems.push(it)
-              }
-              break
-            }
+            const s = matchScore(it.concepto, desc)
+            if (s > bestScore) bestScore = s
+          }
+          if (bestScore >= 50) {
+            scored.push({ item: it, score: bestScore })
+          }
+        }
+        // Sort by score descending and take the best matches
+        scored.sort((a, b) => b.score - a.score)
+        for (const s of scored) {
+          if (!matchedItems.find(m => m.id === s.item.id)) {
+            matchedItems.push(s.item)
           }
         }
       }

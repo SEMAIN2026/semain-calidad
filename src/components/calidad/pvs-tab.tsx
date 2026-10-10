@@ -55,6 +55,9 @@ interface CalidadItem {
   archivo: string | null
   createdAt: string
   updatedAt: string
+  // Computed by API
+  daysRemaining: number | null
+  isRetrasado: boolean
 }
 
 const ESTADO_COLORS: Record<string, string> = {
@@ -255,6 +258,7 @@ export function PvsTab({
                   <TableHead className="w-[90px]">Fecha PV</TableHead>
                   <TableHead className="w-[80px]">TE</TableHead>
                   <TableHead className="w-[90px]">Entrega est.</TableHead>
+                  <TableHead className="w-[70px] text-center">Días</TableHead>
                   <TableHead className="w-[100px]">Estado</TableHead>
                   <TableHead className="w-[90px]">Fecha envío</TableHead>
                   <TableHead className="w-[90px]">Status envío</TableHead>
@@ -284,6 +288,29 @@ export function PvsTab({
                       ) : '—'}
                     </TableCell>
                     <TableCell className="text-xs">{formatDate(it.fechaEntregaEstimada)}</TableCell>
+                    <TableCell className="text-center">
+                      {it.shippingDate ? (
+                        <span className="text-[10px] text-green-600 dark:text-green-400">Enviado</span>
+                      ) : it.daysRemaining === null ? (
+                        <span className="text-[10px] text-muted-foreground">—</span>
+                      ) : it.daysRemaining < 0 ? (
+                        <span className="text-[10px] font-bold text-red-600 dark:text-red-400 tabular-nums">
+                          {it.daysRemaining}d
+                        </span>
+                      ) : it.daysRemaining === 0 ? (
+                        <span className="text-[10px] font-bold text-orange-600 dark:text-orange-400">
+                          Hoy
+                        </span>
+                      ) : it.daysRemaining <= 7 ? (
+                        <span className="text-[10px] font-bold text-yellow-600 dark:text-yellow-400 tabular-nums">
+                          {it.daysRemaining}d
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-muted-foreground tabular-nums">
+                          {it.daysRemaining}d
+                        </span>
+                      )}
+                    </TableCell>
                     <TableCell>
                       <Badge variant="outline" className={`text-[10px] ${ESTADO_COLORS[it.estado] || ''}`}>
                         {it.estado}
@@ -327,7 +354,7 @@ export function PvsTab({
                 ))}
                 {!loading && filtered.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={13} className="text-center py-12 text-muted-foreground">
+                    <TableCell colSpan={14} className="text-center py-12 text-muted-foreground">
                       No hay items. Importa el Excel o agrega uno manualmente.
                     </TableCell>
                   </TableRow>
@@ -346,7 +373,7 @@ export function PvsTab({
               <span className="w-3 h-3 rounded bg-green-100 border border-green-300" /> Entregado
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded bg-red-100 border border-red-300" /> Atrasado
+              <span className="w-3 h-3 rounded bg-red-100 border border-red-300" /> Atrasado/Retrasado
             </span>
             <span className="flex items-center gap-1.5">
               <span className="w-3 h-3 rounded bg-yellow-100 border border-yellow-300" /> Por vencer
@@ -359,10 +386,16 @@ export function PvsTab({
             </span>
             <span className="mx-3 text-muted-foreground">|</span>
             <span className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded bg-green-200 border border-green-400" /> Envío a tiempo
+              <span className="text-red-600 font-bold text-[10px]">-Nd</span> Días negativos = retrasado
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded bg-lime-200 border border-lime-400" /> Envío tarde
+              <span className="text-orange-600 font-bold text-[10px]">Hoy</span> Vence hoy
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="text-yellow-600 font-bold text-[10px]">Nd</span> ≤ 7 días
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="text-green-600 text-[10px]">Enviado</span> Ya tiene envío
             </span>
           </div>
         </CardContent>

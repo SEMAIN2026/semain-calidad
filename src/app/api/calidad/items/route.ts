@@ -3,6 +3,34 @@ import { db } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
+function computeDaysInfo(item: {
+  fechaEntregaEstimada: Date | string | null
+  fechaReprogramada: Date | string | null
+  shippingDate: Date | string | null
+  estado: string
+}) {
+  const now = new Date()
+  // Use reprogramada if available, else estimated
+  const target = item.fechaReprogramada
+    ? new Date(item.fechaReprogramada)
+    : item.fechaEntregaEstimada
+      ? new Date(item.fechaEntregaEstimada)
+      : null
+
+  if (!target) {
+    return { daysRemaining: null, isRetrasado: false }
+  }
+
+  const msDiff = target.getTime() - now.getTime()
+  const daysRemaining = Math.ceil(msDiff / (1000 * 60 * 60 * 24))
+
+  // If past the date and not shipped (no shippingDate), it's retrasado
+  const shipped = !!item.shippingDate
+  const isRetrasado = daysRemaining < 0 && !shipped
+
+  return { daysRemaining, isRetrasado }
+}
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const estado = searchParams.get('estado')
@@ -28,10 +56,33 @@ export async function GET(req: NextRequest) {
 
   const items = await db.calidadItem.findMany({
     where,
-    orderBy: [{ estado: 'asc' }, { pvNumber: 'asc' }, { itemLine: 'asc' }],
+    orderBy: [
+      // Most recent PVs first (by fechaPv desc, fallback to createdAt)
+      { fechaPv: 'desc' },
+      { createdAt: 'desc' },
+      // Within a PV, keep itemLine order
+      { pvNumber: 'asc' },
+      { itemLine: 'asc' },
+    ],
   })
 
-  return NextResponse.json({ data: items })
+  // Enrich with days info and auto-mark retrasados
+  const enriched = items.map(it => {
+    const { daysRemaining, isRetrasado } = computeDaysInfo(it)
+    // Auto-update estado if retrasado and not already entregado/atrasado
+    let autoEstado = it.estado
+    if (isRetrasado && it.estado !== 'Entregado' && it.estado !== 'ATRASADO') {
+      autoEstado = 'ATRASADO'
+    }
+    return {
+      ...it,
+      estado: autoEstado,
+      daysRemaining,
+      isRetrasado,
+    }
+  })
+
+  return NextResponse.json({ data: enriched })
 }
 
 export async function POST(req: NextRequest) {
