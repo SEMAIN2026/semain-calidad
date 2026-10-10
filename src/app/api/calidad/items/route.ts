@@ -66,19 +66,41 @@ export async function GET(req: NextRequest) {
     ],
   })
 
-  // Enrich with days info and auto-mark retrasados
+  // Get all child items for the items in this query (to show partial info)
+  const parentIds = items.filter(it => !it.parentId).map(it => it.id)
+  const children = parentIds.length > 0
+    ? await db.calidadItem.findMany({
+        where: { parentId: { in: parentIds } },
+        orderBy: { itemLine: 'asc' },
+      })
+    : []
+  const childrenByParent = new Map<string, typeof children>()
+  for (const c of children) {
+    const arr = childrenByParent.get(c.parentId!) || []
+    arr.push(c)
+    childrenByParent.set(c.parentId!, arr)
+  }
+
+  // Enrich with days info, auto-mark retrasados, and partial info
   const enriched = items.map(it => {
     const { daysRemaining, isRetrasado } = computeDaysInfo(it)
-    // Auto-update estado if retrasado and not already entregado/atrasado
     let autoEstado = it.estado
     if (isRetrasado && it.estado !== 'Entregado' && it.estado !== 'ATRASADO') {
       autoEstado = 'ATRASADO'
     }
+    const childItems = childrenByParent.get(it.id) || []
     return {
       ...it,
       estado: autoEstado,
       daysRemaining,
       isRetrasado,
+      childItems: childItems.map(c => ({
+        id: c.id,
+        cantidad: c.cantidad,
+        estado: c.estado,
+        itemLine: c.itemLine,
+      })),
+      cantidadPendiente: Math.max(0, (it.cantidad || 0) - (it.cantidadEnviada || 0)),
     }
   })
 

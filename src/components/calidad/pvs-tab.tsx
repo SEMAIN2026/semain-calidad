@@ -24,7 +24,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { useToast } from '@/hooks/use-toast'
 import {
-  RefreshCw, Plus, Pencil, Trash2, CalendarClock, Download, Search,
+  RefreshCw, Plus, Pencil, Trash2, CalendarClock, Download, Search, GitBranch,
 } from 'lucide-react'
 import { formatDateTime, formatDate } from '@/lib/time-tracking'
 
@@ -55,9 +55,16 @@ interface CalidadItem {
   archivo: string | null
   createdAt: string
   updatedAt: string
+  // Partial fields
+  parentId: string | null
+  cantidadEnviada: number
+  esParcial: boolean
+  partialOf: string | null
   // Computed by API
   daysRemaining: number | null
   isRetrasado: boolean
+  childItems: { id: string; cantidad: number; estado: string; itemLine: number }[]
+  cantidadPendiente: number
 }
 
 const ESTADO_COLORS: Record<string, string> = {
@@ -91,9 +98,11 @@ export function PvsTab({
   const [editOpen, setEditOpen] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [refreshOpen, setRefreshOpen] = useState(false)
+  const [partialOpen, setPartialOpen] = useState(false)
   const [deleteId, setDeleteId] = useState<string | null>(null)
   const [editing, setEditing] = useState<CalidadItem | null>(null)
   const [refreshTarget, setRefreshTarget] = useState<CalidadItem | null>(null)
+  const [partialTarget, setPartialTarget] = useState<CalidadItem | null>(null)
 
   const filtered = useMemo(() => {
     return items.filter(it => {
@@ -280,7 +289,21 @@ export function PvsTab({
                     <TableCell>
                       <div className="text-xs whitespace-normal break-words">{it.cliente || '—'}</div>
                     </TableCell>
-                    <TableCell className="text-right tabular-nums">{it.cantidad}</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      <div className="flex flex-col items-end">
+                        <span>{it.cantidad}</span>
+                        {it.cantidadEnviada > 0 && it.cantidadEnviada < it.cantidad && (
+                          <span className="text-[9px] text-orange-600 dark:text-orange-400 font-bold">
+                            {it.cantidadEnviada}/{it.cantidad} enviadas
+                          </span>
+                        )}
+                        {it.esParcial && (
+                          <span className="text-[9px] text-purple-600 dark:text-purple-400 font-bold">
+                            restante
+                          </span>
+                        )}
+                      </div>
+                    </TableCell>
                     <TableCell className="text-xs">{formatDate(it.fechaPv)}</TableCell>
                     <TableCell className="text-xs">
                       {it.teTexto ? (
@@ -340,6 +363,11 @@ export function PvsTab({
                           <DropdownMenuItem onClick={() => { setRefreshTarget(it); setRefreshOpen(true) }}>
                             <CalendarClock className="h-3.5 w-3.5 mr-2" /> Actualizar fecha
                           </DropdownMenuItem>
+                          {!it.parentId && it.cantidad > 1 && it.cantidadEnviada < it.cantidad && (
+                            <DropdownMenuItem onClick={() => { setPartialTarget(it); setPartialOpen(true) }}>
+                              <GitBranch className="h-3.5 w-3.5 mr-2" /> Crear parcial
+                            </DropdownMenuItem>
+                          )}
                           <DropdownMenuSeparator />
                           <DropdownMenuItem
                             className="text-destructive focus:text-destructive"
@@ -460,6 +488,40 @@ export function PvsTab({
           onSave={async (data) => {
             await handleRefreshDate(refreshTarget.id, data)
             return true
+          }}
+        />
+      )}
+
+      {partialOpen && partialTarget && (
+        <PartialDialog
+          key={`partial-${partialTarget.id}`}
+          open={partialOpen}
+          onOpenChange={setPartialOpen}
+          item={partialTarget}
+          onSave={async (shippedQty) => {
+            try {
+              const res = await fetch(`/api/calidad/items/${partialTarget.id}/create-partial`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ shippedQty }),
+              })
+              const json = await res.json()
+              if (!res.ok) {
+                toast({ title: 'Error', description: json.error, variant: 'destructive' })
+                return false
+              }
+              toast({
+                title: 'Parcial creado',
+                description: `${shippedQty} enviadas, ${partialTarget.cantidad - shippedQty - (partialTarget.cantidadEnviada || 0)} restantes`,
+              })
+              setPartialOpen(false)
+              setPartialTarget(null)
+              await onRefresh()
+              return true
+            } catch (e: any) {
+              toast({ title: 'Error', description: e?.message, variant: 'destructive' })
+              return false
+            }
           }}
         />
       )}
@@ -709,6 +771,70 @@ function RefreshDateDialog({ open, onOpenChange, item, onSave }: {
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
           <Button onClick={submit}>Guardar</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function PartialDialog({ open, onOpenChange, item, onSave }: {
+  open: boolean
+  onOpenChange: (o: boolean) => void
+  item: CalidadItem | null
+  onSave: (shippedQty: number) => Promise<boolean>
+}) {
+  const totalQty = item?.cantidad || 1
+  const alreadyShipped = item?.cantidadEnviada || 0
+  const available = totalQty - alreadyShipped
+  const [shippedQty, setShippedQty] = useState(String(Math.max(1, available - 1)))
+
+  const submit = async () => {
+    const qty = Number(shippedQty)
+    if (!qty || qty <= 0 || qty >= available) {
+      return
+    }
+    await onSave(qty)
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Crear envío parcial</DialogTitle>
+          <DialogDescription>
+            Marca cuántas piezas se enviaron en este parcial. Se creará un item nuevo con la cantidad restante.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          {item && (
+            <div className="text-xs text-muted-foreground p-2 bg-muted rounded">
+              <span className="font-mono">{item.pvNumber} #{item.itemLine}</span>
+              <br />
+              <span className="truncate block">{item.concepto}</span>
+              <div className="mt-1 flex gap-3">
+                <span>Total: <b>{item.cantidad}</b></span>
+                <span>Ya enviadas: <b>{alreadyShipped}</b></span>
+                <span>Disponibles: <b className="text-blue-600">{available}</b></span>
+              </div>
+            </div>
+          )}
+          <div className="space-y-1.5">
+            <Label className="text-xs">Cantidad enviada en este parcial</Label>
+            <Input
+              type="number"
+              min={1}
+              max={available - 1}
+              value={shippedQty}
+              onChange={e => setShippedQty(e.target.value)}
+            />
+            <p className="text-[10px] text-muted-foreground">
+              Se creará un item nuevo con <b>{Math.max(0, available - (Number(shippedQty) || 0))}</b> piezas restantes.
+            </p>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
+          <Button onClick={submit}>Crear parcial</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

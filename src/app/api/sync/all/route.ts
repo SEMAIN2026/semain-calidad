@@ -149,7 +149,7 @@ export async function POST() {
         continue
       }
 
-      // Update each matched item
+      // Update each matched item, handling partials
       for (const it of matchedItems) {
         // Determine onTime: compare ship date with estimated delivery date
         let onTime = true
@@ -158,18 +158,115 @@ export async function POST() {
         }
         const newStatus = onTime ? 'a_tiempo' : 'tarde'
 
-        await db.calidadItem.update({
-          where: { id: it.id },
-          data: {
-            shippingDate: shipDate,
-            shippingStatus: newStatus,
-            shippingSynced: true,
-            guia: guia,
-            paqueteria: paqueteria,
-            estado: 'Entregado',
-            embarque: 'x',
-          },
-        })
+        // Try to find the specific shipping item that matched this calidadItem
+        // by re-scoring each shipping item description against this item's concepto
+        let matchedShippingItem: { qty?: string | number; pkg?: string } | null = null
+        let bestItemScore = 0
+        for (const sItem of (rec.items || [])) {
+          const pkg = sItem.pkg || ''
+          const s = matchScore(it.concepto, pkg)
+          if (s > bestItemScore) {
+            bestItemScore = s
+            matchedShippingItem = sItem
+          }
+        }
+
+        // Parse the shipped quantity from the matched shipping item
+        let shippedQty = 0
+        if (matchedShippingItem?.qty) {
+          shippedQty = parseInt(String(matchedShippingItem.qty), 10) || 0
+        }
+
+        const totalQty = it.cantidad || 1
+        const alreadyShipped = it.cantidadEnviada || 0
+
+        // Skip if this item was already fully shipped (avoid re-matching)
+        if (alreadyShipped >= totalQty) {
+          continue
+        }
+
+        // Determine if this is a partial shipment
+        const isPartial = shippedQty > 0 && shippedQty < (totalQty - alreadyShipped)
+
+        if (isPartial) {
+          // PARTIAL: update parent with shippedQty, create child with remaining
+          const remaining = totalQty - alreadyShipped - shippedQty
+          if (remaining > 0) {
+            // Update parent: accumulate shipped quantity
+            await db.calidadItem.update({
+              where: { id: it.id },
+              data: {
+                cantidadEnviada: alreadyShipped + shippedQty,
+                shippingDate: shipDate,
+                shippingStatus: newStatus,
+                shippingSynced: true,
+                guia: guia,
+                paqueteria: paqueteria,
+                embarque: 'x',
+                // Keep estado as EN TIEMPO/ATRASADO since there's remaining
+                estado: alreadyShipped + shippedQty >= totalQty ? 'Entregado' : it.estado,
+              },
+            })
+
+            // Create child item with remaining quantity
+            // Check if a child already exists for this parent with similar characteristics
+            const existingChild = await db.calidadItem.findFirst({
+              where: {
+                parentId: it.id,
+                cantidad: remaining,
+                esParcial: true,
+              },
+            })
+
+            if (!existingChild) {
+              const maxLineItem = await db.calidadItem.findFirst({
+                where: { pvNumber: it.pvNumber },
+                orderBy: { itemLine: 'desc' },
+              })
+              const newItemLine = (maxLineItem?.itemLine || 0) + 1
+
+              await db.calidadItem.create({
+                data: {
+                  pvNumber: it.pvNumber,
+                  itemLine: newItemLine,
+                  cliente: it.cliente,
+                  concepto: it.concepto,
+                  clave: it.clave,
+                  cantidad: remaining,
+                  fechaPv: it.fechaPv,
+                  fechaInicio: it.fechaInicio,
+                  teTexto: it.teTexto,
+                  teDias: it.teDias,
+                  fechaEntregaEstimada: it.fechaEntregaEstimada,
+                  fechaReprogramada: it.fechaReprogramada,
+                  estado: 'EN TIEMPO',
+                  source: 'partial',
+                  isManual: false,
+                  parentId: it.id,
+                  partialOf: it.id,
+                  esParcial: true,
+                  notes: `Restante de envío parcial (${shippedQty} de ${totalQty} enviadas, guía ${guia || 'N/A'})`,
+                  archivo: it.archivo,
+                },
+              })
+            }
+          }
+        } else {
+          // FULL shipment (or qty not specified): mark as fully delivered
+          await db.calidadItem.update({
+            where: { id: it.id },
+            data: {
+              shippingDate: shipDate,
+              shippingStatus: newStatus,
+              shippingSynced: true,
+              guia: guia,
+              paqueteria: paqueteria,
+              estado: 'Entregado',
+              embarque: 'x',
+              cantidadEnviada: totalQty,
+            },
+          })
+        }
         shippingResult.matched++
       }
     }

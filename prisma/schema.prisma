@@ -19,7 +19,7 @@ model CalidadItem {
   cliente                 String?  // "HUTCHINSON TRANSFERENCIA..."
   concepto                String   // "MANDRIL CON TAPAS | G90A5-0E020 MANDREL"
   clave                   String?  // "FIX-NVO-01", "MAN-NVO-01"
-  cantidad                Int      @default(1)
+  cantidad                Int      @default(1) // Cantidad total original
 
   // --- Fechas y tiempos (del Excel) ---
   fechaPv                 DateTime? // Fecha de la PV
@@ -40,8 +40,14 @@ model CalidadItem {
   guia                    String?  // Número de guía
   paqueteria              String?  // DHL, ESTAFETA, etc.
 
+  // --- Envíos parciales / rezagos ---
+  parentId                String?  // Si es un item "hijo" (parcial), apunta al item padre
+  cantidadEnviada         Int      @default(0) // Cuántas piezas se han enviado (acumulado)
+  esParcial               Boolean  @default(false) // True si este item es un resto de un parcial
+  partialOf               String?  // Referencia al item padre original (para mostrar en UI)
+
   // --- Metadata ---
-  source                  String   @default("manual") // manual | almacen | excel
+  source                  String   @default("manual") // manual | almacen | excel | partial
   isManual                Boolean  @default(false)
   notes                   String?
   archivo                 String?  // "PV1290.pdf"
@@ -54,6 +60,7 @@ model CalidadItem {
   @@index([estado])
   @@index([shippingStatus])
   @@index([cliente])
+  @@index([parentId])
 }
 
 model SyncLog {
