@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Toaster } from '@/components/ui/toaster'
 import { useToast } from '@/hooks/use-toast'
-import { RefreshCw, Upload, Server, LayoutDashboard, Table2 } from 'lucide-react'
+import { RefreshCw, Upload, Server, LayoutDashboard, Table2, Download, X } from 'lucide-react'
 import { formatDateTime } from '@/lib/time-tracking'
 import { DashboardTab, type DashboardData, type SyncStatus } from '@/components/calidad/dashboard-tab'
 import { PvsTab } from '@/components/calidad/pvs-tab'
@@ -49,7 +49,40 @@ export default function CalidadPage() {
   const [dashboard, setDashboard] = useState<DashboardData | null>(null)
   const [tab, setTab] = useState<string>('pvs')
   const [autoSynced, setAutoSynced] = useState(false)
+  const [installPrompt, setInstallPrompt] = useState<any>(null)
+  const [showInstallBanner, setShowInstallBanner] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // PWA install prompt handler
+  useEffect(() => {
+    const handler = (e: any) => {
+      e.preventDefault()
+      setInstallPrompt(e)
+      // Show banner if not previously dismissed
+      const dismissed = localStorage.getItem('pwa-install-dismissed')
+      if (!dismissed) {
+        setShowInstallBanner(true)
+      }
+    }
+    window.addEventListener('beforeinstallprompt', handler)
+    return () => window.removeEventListener('beforeinstallprompt', handler)
+  }, [])
+
+  const handleInstall = async () => {
+    if (!installPrompt) return
+    installPrompt.prompt()
+    const { outcome } = await installPrompt.userChoice
+    if (outcome === 'accepted') {
+      toast({ title: 'App instalada', description: 'Semain Calidad se instaló en tu dispositivo' })
+    }
+    setInstallPrompt(null)
+    setShowInstallBanner(false)
+  }
+
+  const dismissInstallBanner = () => {
+    setShowInstallBanner(false)
+    localStorage.setItem('pwa-install-dismissed', '1')
+  }
 
   const loadItems = useCallback(async () => {
     setLoading(true)
@@ -158,11 +191,13 @@ export default function CalidadPage() {
   return (
     <div className="min-h-screen flex flex-col bg-background">
       <header className="border-b sticky top-0 z-30 bg-background/95 backdrop-blur">
-        <div className="container mx-auto px-4 py-3 flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-2 mr-4">
-            <div className="w-9 h-9 rounded-lg bg-primary text-primary-foreground flex items-center justify-center font-bold">
-              S
-            </div>
+        <div className="container mx-auto px-4 py-2.5 flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2.5 mr-4">
+            <img
+              src="/icons/icon-192x192.png"
+              alt="Semain"
+              className="w-10 h-10 rounded-lg object-contain"
+            />
             <div>
               <h1 className="text-lg font-bold leading-tight">Semain · Calidad</h1>
               <p className="text-xs text-muted-foreground leading-tight">Seguimiento de PV y envíos</p>
@@ -190,8 +225,33 @@ export default function CalidadPage() {
               {syncing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               <span className="ml-1.5">{syncing ? 'Sincronizando...' : 'Sincronizar'}</span>
             </Button>
+            {installPrompt && (
+              <Button onClick={handleInstall} variant="default" size="sm" className="bg-[#8DC63F] hover:bg-[#7ab233] text-white">
+                <Download className="h-4 w-4" />
+                <span className="ml-1.5 hidden sm:inline">Instalar app</span>
+              </Button>
+            )}
           </div>
         </div>
+
+        {/* PWA Install Banner */}
+        {showInstallBanner && installPrompt && (
+          <div className="container mx-auto px-4 pb-2">
+            <div className="flex items-center gap-3 p-2.5 rounded-lg border bg-muted/50">
+              <img src="/icons/icon-192x192.png" alt="Semain" className="w-8 h-8 rounded" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium">Instalar Semain Calidad</p>
+                <p className="text-xs text-muted-foreground">Acceso rápido desde tu pantalla de inicio</p>
+              </div>
+              <Button onClick={handleInstall} size="sm" className="bg-[#8DC63F] hover:bg-[#7ab233] text-white">
+                Instalar
+              </Button>
+              <Button onClick={dismissInstallBanner} size="sm" variant="ghost" className="h-8 w-8 p-0">
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        )}
 
         {syncStatus && (syncStatus.almacen || syncStatus.shipping) && (
           <div className="container mx-auto px-4 pb-2 flex flex-wrap gap-4 text-xs text-muted-foreground">
