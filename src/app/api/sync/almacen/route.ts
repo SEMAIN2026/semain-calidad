@@ -1,19 +1,15 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { fetchAllItemsByPV, type AlmacenItem } from '@/lib/almacen-client'
+import { fetchPVs } from '@/lib/almacen-client'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
+export const runtime = 'nodejs'
 
 /**
- * Sync from Almacen:
- *   1. Login to https://semain-almacen.vercel.app
- *   2. GET /api/pv-entries -> list of PVs
- *   3. For each PV, GET /api/items?pvNumber=XXX -> items
- *   4. Upsert one CalidadItem per item (key: pvNumber + itemNumber)
- *
- * We only INSERT new items; we do not overwrite manual edits on existing rows
- * (except to mark them as still-present in Almacen).
+ * Sync from Almacen: get all PVs and create one CalidadItem per PV.
+ * The PV body contains the full item description as free text.
+ * Only INSERT new items; do not overwrite manual edits.
  */
 export async function POST() {
   const startedAt = Date.now()
@@ -25,84 +21,47 @@ export async function POST() {
   let error: string | null = null
 
   try {
-    const pvData = await fetchAllItemsByPV()
-    pvsFound = pvData.length
+    const pvs = await fetchPVs()
+    pvsFound = pvs.length
 
-    for (const { pv, items } of pvData) {
-      itemsFound += items.length
-      if (!items.length) {
-        // Even if no items, register the PV as a single placeholder so the user can see it
-        const itemNumber = '0'
-        try {
-          await db.calidadItem.upsert({
-            where: {
-              pvNumber_itemNumber: { pvNumber: pv.pvNumber, itemNumber },
-            },
-            update: {
-              description: pv.subject || pv.body || `(PV sin items)`,
+    for (const pv of pvs) {
+      const itemNumber = '0'
+      const description = pv.subject || pv.body?.slice(0, 200) || `(PV ${pv.pvNumber})`
+      const fullNotes = pv.body || null
+
+      try {
+        const existing = await db.calidadItem.findUnique({
+          where: { pvNumber_itemNumber: { pvNumber: pv.pvNumber, itemNumber } },
+        })
+        if (existing) {
+          await db.calidadItem.update({
+            where: { id: existing.id },
+            data: {
+              description: existing.isManual ? existing.description : description,
               source: 'almacen',
+              notes: existing.isManual ? existing.notes : (fullNotes || pv.notes || null),
             },
-            create: {
+          })
+          updated++
+        } else {
+          await db.calidadItem.create({
+            data: {
               pvNumber: pv.pvNumber,
               itemNumber,
-              description: pv.subject || pv.body || `(PV sin items)`,
+              description,
               quantity: 1,
               estimatedDays: 7,
               source: 'almacen',
               isManual: false,
               status: 'pendiente',
-              notes: pv.notes || null,
+              notes: fullNotes || pv.notes || null,
             },
           })
           created++
-        } catch (e) {
-          skipped++
+          itemsFound++
         }
-        continue
-      }
-
-      for (const item of items) {
-        const itemNumber = String(item.itemId || item.id || items.indexOf(item) + 1)
-        const description = String(item.description || '(sin descripción)')
-        const quantity = Number(item.quantity ?? item.cantidad ?? 1) || 1
-
-        try {
-          const existing = await db.calidadItem.findUnique({
-            where: {
-              pvNumber_itemNumber: { pvNumber: pv.pvNumber, itemNumber },
-            },
-          })
-          if (existing) {
-            // Only update non-manual fields. Don't clobber user edits.
-            await db.calidadItem.update({
-              where: { id: existing.id },
-              data: {
-                description: existing.isManual ? existing.description : description,
-                quantity: existing.isManual ? existing.quantity : quantity,
-                source: 'almacen',
-                notes: existing.notes || (pv.notes ? String(pv.notes) : null) || null,
-              },
-            })
-            updated++
-          } else {
-            await db.calidadItem.create({
-              data: {
-                pvNumber: pv.pvNumber,
-                itemNumber,
-                description,
-                quantity,
-                estimatedDays: 7,
-                source: 'almacen',
-                isManual: false,
-                status: 'pendiente',
-                notes: pv.notes || null,
-              },
-            })
-            created++
-          }
-        } catch (e) {
-          skipped++
-        }
+      } catch {
+        skipped++
       }
     }
   } catch (e: any) {
@@ -115,7 +74,7 @@ export async function POST() {
     data: {
       source: 'almacen',
       status: error ? 'error' : 'success',
-      message: error || `Sync OK: ${pvsFound} PVs, ${itemsFound} items (created ${created}, updated ${updated}, skipped ${skipped})`,
+      message: error || `Sync OK: ${pvsFound} PVs (created ${created}, updated ${updated}, skipped ${skipped})`,
       itemsCount: created + updated,
     },
   })

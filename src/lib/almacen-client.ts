@@ -105,18 +105,29 @@ export async function fetchItems(pvNumber?: string): Promise<AlmacenItem[]> {
   return []
 }
 
-/** Get every item across every PV (one row per item, as requested). */
+/** Get every item across every PV (one row per item, as requested).
+ *  Fetches items for all PVs in parallel batches for speed. */
 export async function fetchAllItemsByPV(): Promise<{ pv: AlmacenPV; items: AlmacenItem[] }[]> {
   const pvs = await fetchPVs()
   const result: { pv: AlmacenPV; items: AlmacenItem[] }[] = []
-  for (const pv of pvs) {
-    try {
-      const items = await fetchItems(pv.pvNumber)
-      result.push({ pv, items })
-    } catch (e) {
-      // If filtering by pvNumber fails, skip but keep going
-      console.error(`Failed to fetch items for PV ${pv.pvNumber}:`, e)
-      result.push({ pv, items: [] })
+
+  // Process in batches of 8 parallel requests to avoid overwhelming the API
+  const BATCH_SIZE = 8
+  for (let i = 0; i < pvs.length; i += BATCH_SIZE) {
+    const batch = pvs.slice(i, i + BATCH_SIZE)
+    const batchResults = await Promise.allSettled(
+      batch.map(async pv => {
+        try {
+          const items = await fetchItems(pv.pvNumber)
+          return { pv, items }
+        } catch (e) {
+          console.error(`Failed to fetch items for PV ${pv.pvNumber}:`, e)
+          return { pv, items: [] }
+        }
+      })
+    )
+    for (const r of batchResults) {
+      if (r.status === 'fulfilled') result.push(r.value)
     }
   }
   return result

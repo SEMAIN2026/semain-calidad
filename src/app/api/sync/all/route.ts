@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { fetchAllItemsByPV } from '@/lib/almacen-client'
+import { fetchPVs } from '@/lib/almacen-client'
 import {
   fetchShippings,
   getMatchingText,
@@ -9,7 +9,8 @@ import {
 } from '@/lib/shipping-client'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
+export const maxDuration = 300
+export const runtime = 'nodejs'
 
 /**
  * Unified sync: runs Almacen sync first, then Shipping sync, in one request.
@@ -30,78 +31,49 @@ export async function POST() {
   }
 
   try {
-    const pvData = await fetchAllItemsByPV()
-    almacenResult.pvsFound = pvData.length
+    const pvs = await fetchPVs()
+    almacenResult.pvsFound = pvs.length
 
-    for (const { pv, items } of pvData) {
-      almacenResult.itemsFound += items.length
-      if (!items.length) {
-        const itemNumber = '0'
-        try {
-          await db.calidadItem.upsert({
-            where: { pvNumber_itemNumber: { pvNumber: pv.pvNumber, itemNumber } },
-            update: {
-              description: pv.subject || pv.body || `(PV sin items)`,
+    // Create one CalidadItem per PV (key: pvNumber + itemNumber "0")
+    // The PV body contains the full item description as free text.
+    for (const pv of pvs) {
+      const itemNumber = '0'
+      const description = pv.subject || pv.body?.slice(0, 200) || `(PV ${pv.pvNumber})`
+      const fullNotes = pv.body || null
+
+      try {
+        const existing = await db.calidadItem.findUnique({
+          where: { pvNumber_itemNumber: { pvNumber: pv.pvNumber, itemNumber } },
+        })
+        if (existing) {
+          await db.calidadItem.update({
+            where: { id: existing.id },
+            data: {
+              description: existing.isManual ? existing.description : description,
               source: 'almacen',
+              notes: existing.isManual ? existing.notes : (fullNotes || pv.notes || null),
             },
-            create: {
+          })
+          almacenResult.updated++
+        } else {
+          await db.calidadItem.create({
+            data: {
               pvNumber: pv.pvNumber,
               itemNumber,
-              description: pv.subject || pv.body || `(PV sin items)`,
+              description,
               quantity: 1,
               estimatedDays: 7,
               source: 'almacen',
               isManual: false,
               status: 'pendiente',
-              notes: pv.notes || null,
+              notes: fullNotes || pv.notes || null,
             },
           })
           almacenResult.created++
-        } catch {
-          almacenResult.skipped++
+          almacenResult.itemsFound++
         }
-        continue
-      }
-
-      for (const item of items) {
-        const itemNumber = String(item.itemId || item.id || items.indexOf(item) + 1)
-        const description = String(item.description || '(sin descripción)')
-        const quantity = Number(item.quantity ?? item.cantidad ?? 1) || 1
-
-        try {
-          const existing = await db.calidadItem.findUnique({
-            where: { pvNumber_itemNumber: { pvNumber: pv.pvNumber, itemNumber } },
-          })
-          if (existing) {
-            await db.calidadItem.update({
-              where: { id: existing.id },
-              data: {
-                description: existing.isManual ? existing.description : description,
-                quantity: existing.isManual ? existing.quantity : quantity,
-                source: 'almacen',
-                notes: existing.notes || (pv.notes ? String(pv.notes) : null) || null,
-              },
-            })
-            almacenResult.updated++
-          } else {
-            await db.calidadItem.create({
-              data: {
-                pvNumber: pv.pvNumber,
-                itemNumber,
-                description,
-                quantity,
-                estimatedDays: 7,
-                source: 'almacen',
-                isManual: false,
-                status: 'pendiente',
-                notes: pv.notes || null,
-              },
-            })
-            almacenResult.created++
-          }
-        } catch {
-          almacenResult.skipped++
-        }
+      } catch {
+        almacenResult.skipped++
       }
     }
     almacenResult.ok = true
