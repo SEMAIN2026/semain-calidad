@@ -66,3 +66,7 @@ server.log
 /.next/
 /build/
 /dist/
+
+# Uploads (user-provided files, not part of the app)
+/upload/
+
