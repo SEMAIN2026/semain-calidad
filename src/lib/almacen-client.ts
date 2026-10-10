@@ -2,9 +2,13 @@
  * Almacen API client (read-only).
  * Source: https://semain-almacen.vercel.app
  * Auth: POST /api/auth/login -> { token, user } -> use as Bearer
- * Data: GET /api/pv-entries (list of PVs), GET /api/items (items, can filter by pvNumber)
+ * Data: GET /api/pv-entries (list of PVs with body containing item descriptions as free text)
  *
  * IMPORTANT: We ONLY read from this API. We never modify any data on the Almacen site.
+ *
+ * Note: The PV "body" field contains the full email text with item descriptions.
+ * We extract item-like lines from it. The structured data (cliente, concepto,
+ * teTexto, etc.) comes from the Excel import, not from Almacén.
  */
 
 const ALMACEN_BASE = process.env.ALMACEN_BASE_URL || 'https://semain-almacen.vercel.app'
@@ -20,20 +24,8 @@ export interface AlmacenPV {
   sender?: string | null
   body?: string | null
   notes?: string | null
+  receivedAt?: string
   createdAt?: string
-  [k: string]: unknown
-}
-
-export interface AlmacenItem {
-  id?: string | number
-  itemId?: string
-  pvNumber?: string
-  description?: string
-  quantity?: number | string
-  cantidad?: number | string
-  warehouse?: string
-  almacen?: string
-  codigo?: string
   [k: string]: unknown
 }
 
@@ -53,7 +45,6 @@ async function login(): Promise<string> {
   const data = await res.json()
   const token = data.token || data.accessToken || data.authToken
   if (!token) throw new Error('Almacen login: no token in response')
-  // Cache for 50 minutes (assume 1h expiry)
   cachedToken = { token, expires: Date.now() + 50 * 60 * 1000 }
   return token
 }
@@ -70,7 +61,6 @@ async function authedGet(path: string): Promise<any> {
     cache: 'no-store',
   })
   if (res.status === 401) {
-    // Token expired, retry once
     cachedToken = null
     const newToken = await getToken()
     const retry = await fetch(`${ALMACEN_BASE}${path}`, {
@@ -87,48 +77,9 @@ async function authedGet(path: string): Promise<any> {
 /** Get all PVs from Almacen. */
 export async function fetchPVs(): Promise<AlmacenPV[]> {
   const data = await authedGet('/api/pv-entries')
-  // Could be array or { data: [...] }
   if (Array.isArray(data)) return data
-  if (Array.isArray(data?.data)) return data.data
   if (Array.isArray(data?.entries)) return data.entries
+  if (Array.isArray(data?.data)) return data.data
   if (Array.isArray(data?.pvs)) return data.pvs
   return []
-}
-
-/** Get items, optionally filtered by pvNumber. */
-export async function fetchItems(pvNumber?: string): Promise<AlmacenItem[]> {
-  const qs = pvNumber ? `?pvNumber=${encodeURIComponent(pvNumber)}` : ''
-  const data = await authedGet(`/api/items${qs}`)
-  if (Array.isArray(data)) return data
-  if (Array.isArray(data?.data)) return data.data
-  if (Array.isArray(data?.items)) return data.items
-  return []
-}
-
-/** Get every item across every PV (one row per item, as requested).
- *  Fetches items for all PVs in parallel batches for speed. */
-export async function fetchAllItemsByPV(): Promise<{ pv: AlmacenPV; items: AlmacenItem[] }[]> {
-  const pvs = await fetchPVs()
-  const result: { pv: AlmacenPV; items: AlmacenItem[] }[] = []
-
-  // Process in batches of 8 parallel requests to avoid overwhelming the API
-  const BATCH_SIZE = 8
-  for (let i = 0; i < pvs.length; i += BATCH_SIZE) {
-    const batch = pvs.slice(i, i + BATCH_SIZE)
-    const batchResults = await Promise.allSettled(
-      batch.map(async pv => {
-        try {
-          const items = await fetchItems(pv.pvNumber)
-          return { pv, items }
-        } catch (e) {
-          console.error(`Failed to fetch items for PV ${pv.pvNumber}:`, e)
-          return { pv, items: [] }
-        }
-      })
-    )
-    for (const r of batchResults) {
-      if (r.status === 'fulfilled') result.push(r.value)
-    }
-  }
-  return result
 }

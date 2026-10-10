@@ -1,46 +1,37 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { computeTimeInfo } from '@/lib/time-tracking'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
-  const status = searchParams.get('status')
+  const estado = searchParams.get('estado')
   const shippingStatus = searchParams.get('shippingStatus')
   const pv = searchParams.get('pv')
+  const cliente = searchParams.get('cliente')
   const q = searchParams.get('q')
 
   const where: any = {}
-  if (status) where.status = status
+  if (estado) where.estado = estado
   if (shippingStatus) where.shippingStatus = shippingStatus
   if (pv) where.pvNumber = { contains: pv }
+  if (cliente) where.cliente = { contains: cliente }
   if (q) {
     where.OR = [
       { pvNumber: { contains: q } },
-      { description: { contains: q } },
-      { itemNumber: { contains: q } },
+      { concepto: { contains: q } },
+      { cliente: { contains: q } },
+      { clave: { contains: q } },
       { notes: { contains: q } },
     ]
   }
 
   const items = await db.calidadItem.findMany({
     where,
-    orderBy: [{ shippingStatus: 'asc' }, { createdAt: 'desc' }],
+    orderBy: [{ estado: 'asc' }, { pvNumber: 'asc' }, { itemLine: 'asc' }],
   })
 
-  const withTime = items.map(it => ({
-    ...it,
-    time: computeTimeInfo({
-      createdAt: it.createdAt,
-      estimatedDays: it.estimatedDays,
-      status: it.status,
-      shippingStatus: it.shippingStatus,
-      shippingSynced: it.shippingSynced,
-    }),
-  }))
-
-  return NextResponse.json({ data: withTime })
+  return NextResponse.json({ data: items })
 }
 
 export async function POST(req: NextRequest) {
@@ -48,30 +39,27 @@ export async function POST(req: NextRequest) {
   if (!body) return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
 
   const {
-    pvNumber,
-    itemNumber,
-    description,
-    quantity,
-    estimatedDays,
-    notes,
-    status,
-    shippingDate,
-    shippingStatus,
+    pvNumber, itemLine, cliente, concepto, clave, cantidad,
+    fechaPv, fechaInicio, teTexto, teDias,
+    fechaEntregaEstimada, fechaReprogramada,
+    estado, embarque, notes, archivo,
   } = body
 
-  if (!pvNumber || !itemNumber || !description) {
+  if (!pvNumber || !concepto) {
     return NextResponse.json(
-      { error: 'pvNumber, itemNumber y description son obligatorios' },
+      { error: 'pvNumber y concepto son obligatorios' },
       { status: 400 }
     )
   }
 
+  const line = Number(itemLine) || 1
+
   const existing = await db.calidadItem.findUnique({
-    where: { pvNumber_itemNumber: { pvNumber: String(pvNumber), itemNumber: String(itemNumber) } },
+    where: { pvNumber_itemLine: { pvNumber: String(pvNumber), itemLine: line } },
   })
   if (existing) {
     return NextResponse.json(
-      { error: `Ya existe un item con PV ${pvNumber} e item ${itemNumber}` },
+      { error: `Ya existe un item con PV ${pvNumber} línea ${line}` },
       { status: 409 }
     )
   }
@@ -79,14 +67,21 @@ export async function POST(req: NextRequest) {
   const created = await db.calidadItem.create({
     data: {
       pvNumber: String(pvNumber),
-      itemNumber: String(itemNumber),
-      description: String(description),
-      quantity: Number(quantity) || 1,
-      estimatedDays: Number(estimatedDays) || 7,
-      notes: notes ? String(notes) : null,
-      status: status || 'pendiente',
-      shippingDate: shippingDate ? new Date(shippingDate) : null,
-      shippingStatus: shippingStatus || null,
+      itemLine: line,
+      cliente: cliente || null,
+      concepto: String(concepto),
+      clave: clave || null,
+      cantidad: Number(cantidad) || 1,
+      fechaPv: fechaPv ? new Date(fechaPv) : null,
+      fechaInicio: fechaInicio ? new Date(fechaInicio) : null,
+      teTexto: teTexto || null,
+      teDias: teDias ? Number(teDias) : null,
+      fechaEntregaEstimada: fechaEntregaEstimada ? new Date(fechaEntregaEstimada) : null,
+      fechaReprogramada: fechaReprogramada ? new Date(fechaReprogramada) : null,
+      estado: estado || 'EN TIEMPO',
+      embarque: embarque || null,
+      notes: notes || null,
+      archivo: archivo || null,
       isManual: true,
       source: 'manual',
     },

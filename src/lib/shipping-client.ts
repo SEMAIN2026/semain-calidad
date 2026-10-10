@@ -2,14 +2,17 @@
  * Shipping Notice API client (read-only).
  * Source: https://semain-shipping-notice.vercel.app
  * Auth: POST /api/auth/login -> { token, user } -> use as Bearer
- * Data: GET /api/shippings (list of shipments, includes fecha, producto, guia, status, cliente, carrier)
- *       GET /api/registros (records / "Control de Envíos" entries)
+ * Data: GET /api/shippings (Control de Envíos records)
+ *
+ * Record structure (from JS bundle analysis):
+ * { id, fecha, empresa, codigo_cliente, cliente, qty, producto, factura,
+ *   correo, guia, url_rastreo, shipping_num, link3d, mes, anio, um, po,
+ *   paqueteria, shipping_id, shipping_na, client_id, costo }
+ *
+ * The "producto" field contains a description that may reference the PV number
+ * or the item concept. We use it to match back to CalidadItems.
  *
  * IMPORTANT: We ONLY read from this API. We never modify any data on the Shipping Notice site.
- *
- * Matching strategy:
- *   The "producto" / "descripcion" field on a shipment record contains a reference to the
- *   PV number or the item description. We use it to link back to CalidadItems.
  */
 
 const SHIPPING_BASE = process.env.SHIPPING_BASE_URL || 'https://semain-shipping-notice.vercel.app'
@@ -22,20 +25,35 @@ export interface ShippingRecord {
   id?: string | number
   fecha?: string
   fechaEnvio?: string
-  producto?: string
-  descripcion?: string
-  detalle?: string
-  guia?: string
+  empresa?: string
   cliente?: string
   client?: string
+  codigo_cliente?: string
+  qty?: string | number
+  producto?: string
+  factura?: string
+  invoiceNumber?: string
+  correo?: string
+  guia?: string
+  url_rastreo?: string
+  shipping_num?: string
+  link3d?: string
+  mes?: string
+  anio?: string | number
+  um?: string
+  po?: string
+  paqueteria?: string
   carrier?: string
   transportista?: string
+  shipping_id?: string | number
+  shipping_na?: number
+  client_id?: string | number
+  costo?: string | number
   status?: string
   estado?: string
   onTime?: boolean
-  invoiceNumber?: string
-  factura?: string
-  po?: string
+  descripcion?: string
+  detalle?: string
   [k: string]: unknown
 }
 
@@ -86,7 +104,6 @@ async function authedGet(path: string): Promise<any> {
 
 /** Get all shipping records (Control de Envíos). */
 export async function fetchShippings(): Promise<ShippingRecord[]> {
-  // Try /api/shippings first, fall back to /api/registros
   let data: any
   try {
     data = await authedGet('/api/shippings')
@@ -100,7 +117,7 @@ export async function fetchShippings(): Promise<ShippingRecord[]> {
   return []
 }
 
-/** Normalize a shipping record into a matchable text blob. */
+/** Build a lowercase text blob from a shipping record for matching. */
 export function getMatchingText(rec: ShippingRecord): string {
   const parts = [
     rec.producto,
@@ -109,43 +126,52 @@ export function getMatchingText(rec: ShippingRecord): string {
     rec.po,
     rec.factura,
     rec.invoiceNumber,
+    rec.empresa,
+    rec.cliente,
+    rec.client,
   ].filter(Boolean).map(s => String(s).toLowerCase())
   return parts.join(' | ')
 }
 
-/** Extract a PV number reference from a shipping record text, e.g. "PV-1234", "PV1234", "P.V. 1234". */
+/** Extract PV number references from text. Matches "PV 1290", "PV1290", "P.V. 1290", "PV-1290". */
 export function extractPVReferences(text: string): string[] {
   if (!text) return []
-  const matches = text.match(/p\.?\s*v\.?\s*\d+/gi) || []
-  return matches.map(m => m.replace(/\s+/g, '').replace(/\./g, '').toUpperCase())
+  // Match "PV" followed by optional separator and digits
+  const matches = text.match(/p\.?\s*v\.?\s*[-]?\s*\d+/gi) || []
+  return matches.map(m => {
+    // Normalize: extract digits
+    const digits = m.match(/\d+/)?.[0] || ''
+    return digits
+  }).filter(Boolean)
 }
 
-/** Determine if a shipping record indicates a successful / on-time delivery. */
+/** Determine if a shipping record indicates a successful delivery. */
 export function getShippingOutcome(rec: ShippingRecord): {
   shipped: boolean
   onTime: boolean
   date: Date | null
+  guia: string | null
+  paqueteria: string | null
 } {
-  const statusRaw = String(rec.status || rec.estado || '').toLowerCase()
   const hasShipDate = !!(rec.fecha || rec.fechaEnvio)
   const date = rec.fecha ? new Date(rec.fecha) : rec.fechaEnvio ? new Date(rec.fechaEnvio) : null
+  const validDate = date && !isNaN(date.getTime()) ? date : null
 
-  // Statuses that indicate the shipment actually went out
-  const shippedKeywords = ['enviado', 'entregado', 'transito', 'tránsito', 'despachado', 'shipped', 'delivered', 'completado', 'completed']
-  const failedKeywords = ['fallido', 'rechazado', 'cancelado', 'failed', 'cancelled', 'no enviado', 'pendiente']
+  // A record is "shipped" if it has a date and a guia, or a shipping_num
+  const hasGuia = !!(rec.guia || rec.shipping_num)
+  const shipped = hasShipDate && (hasGuia || rec.shipping_na !== undefined)
 
-  const isShipped = hasShipDate || shippedKeywords.some(k => statusRaw.includes(k))
-  const isFailed = failedKeywords.some(k => statusRaw.includes(k)) && !isShipped
-
-  // onTime flag
+  // onTime: we can't determine this from the shipping record alone.
+  // It's determined by comparing the shipping date with the estimated delivery date.
+  // For now, default to true; the sync logic will refine this.
   let onTime = true
   if (typeof rec.onTime === 'boolean') onTime = rec.onTime
-  else if (statusRaw.includes('tarde') || statusRaw.includes('retrasado') || statusRaw.includes('atrasado')) onTime = false
-  else if (statusRaw.includes('tiempo') || statusRaw.includes('a_tiempo') || statusRaw.includes('puntual')) onTime = true
 
   return {
-    shipped: isShipped && !isFailed,
+    shipped,
     onTime,
-    date: date && !isNaN(date.getTime()) ? date : null,
+    date: validDate,
+    guia: rec.guia ? String(rec.guia) : (rec.shipping_num ? String(rec.shipping_num) : null),
+    paqueteria: rec.paqueteria ? String(rec.paqueteria) : (rec.carrier ? String(rec.carrier) : null),
   }
 }

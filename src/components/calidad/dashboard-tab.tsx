@@ -14,17 +14,17 @@ import { formatDateTime } from '@/lib/time-tracking'
 
 export interface DashboardData {
   total: number
+  entregado: number
+  atrasado: number
+  porVencer: number
+  enTiempo: number
+  revisar: number
   shippedOnTime: number
   shippedLate: number
   notShipped: number
-  warning: number
-  overdue: number
-  pending: number
-  inProcess: number
-  completed: number
-  enviado: number
   bySource: { manual: number; almacen: number; excel: number }
-  byPv: { pv: string; count: number }[]
+  topClientes: { cliente: string; count: number }[]
+  topPvs: { pv: string; count: number }[]
   onTimeRate: number
   statusDistribution: { name: string; value: number; color: string }[]
   onTimeTrend: { date: string; label: string; onTime: number; late: number; total: number; rate: number }[]
@@ -50,11 +50,11 @@ export function DashboardTab({
     <div className="space-y-6">
       {/* Stat cards */}
       <section className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        <StatCard icon={<Package className="h-4 w-4" />} label="Total items" value={data.total} tone="default" />
-        <StatCard icon={<CheckCircle2 className="h-4 w-4" />} label="Enviados a tiempo" value={data.shippedOnTime} tone="green" />
-        <StatCard icon={<Clock className="h-4 w-4" />} label="Enviados tarde" value={data.shippedLate} tone="lime" />
-        <StatCard icon={<AlertTriangle className="h-4 w-4" />} label="90% tiempo" value={data.warning} tone="yellow" />
-        <StatCard icon={<XCircle className="h-4 w-4" />} label="Tiempo agotado" value={data.overdue} tone="red" />
+        <StatCard icon={<Package className="h-4 w-4" />} label="Total partidas" value={data.total} tone="default" />
+        <StatCard icon={<CheckCircle2 className="h-4 w-4" />} label="Entregados" value={data.entregado} tone="green" />
+        <StatCard icon={<XCircle className="h-4 w-4" />} label="Atrasados" value={data.atrasado} tone="red" />
+        <StatCard icon={<AlertTriangle className="h-4 w-4" />} label="Por vencer" value={data.porVencer} tone="yellow" />
+        <StatCard icon={<Clock className="h-4 w-4" />} label="En tiempo" value={data.enTiempo} tone="blue" />
         <StatCard icon={<TrendingUp className="h-4 w-4" />} label="% a tiempo" value={`${data.onTimeRate}%`} tone="green" />
       </section>
 
@@ -67,20 +67,15 @@ export function DashboardTab({
               <span className="text-sm font-medium">Última sincronización</span>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {syncStatus.almacen && (
-                <SyncCard title="Almacén" status={syncStatus.almacen} />
-              )}
-              {syncStatus.shipping && (
-                <SyncCard title="Shipping Notice" status={syncStatus.shipping} />
-              )}
+              {syncStatus.almacen && <SyncCard title="Almacén" status={syncStatus.almacen} />}
+              {syncStatus.shipping && <SyncCard title="Shipping Notice" status={syncStatus.shipping} />}
             </div>
           </CardContent>
         </Card>
       )}
 
-      {/* Charts row */}
+      {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Donut: status distribution */}
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2">
@@ -98,12 +93,9 @@ export function DashboardTab({
                 <PieChart>
                   <Pie
                     data={data.statusDistribution}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={60}
-                    outerRadius={100}
-                    paddingAngle={2}
-                    dataKey="value"
+                    cx="50%" cy="50%"
+                    innerRadius={60} outerRadius={100}
+                    paddingAngle={2} dataKey="value"
                     label={(entry: any) => `${entry.name}: ${entry.value}`}
                     labelLine={false}
                   >
@@ -115,8 +107,7 @@ export function DashboardTab({
                     contentStyle={{
                       backgroundColor: 'var(--background)',
                       border: '1px solid var(--border)',
-                      borderRadius: '8px',
-                      fontSize: '12px',
+                      borderRadius: '8px', fontSize: '12px',
                     }}
                   />
                 </PieChart>
@@ -125,7 +116,6 @@ export function DashboardTab({
           </CardContent>
         </Card>
 
-        {/* Line: on-time rate trend */}
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2">
@@ -144,66 +134,62 @@ export function DashboardTab({
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" opacity={0.3} />
                 <XAxis dataKey="label" tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} />
-                <YAxis
-                  domain={[0, 100]}
-                  tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }}
-                  unit="%"
-                />
+                <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} unit="%" />
                 <Tooltip
                   contentStyle={{
                     backgroundColor: 'var(--background)',
                     border: '1px solid var(--border)',
-                    borderRadius: '8px',
-                    fontSize: '12px',
+                    borderRadius: '8px', fontSize: '12px',
                   }}
                   formatter={(value: any, name: any) => {
                     if (name === 'rate') return [`${value}%`, '% a tiempo']
                     return [value, name]
                   }}
                 />
-                <Area
-                  type="monotone"
-                  dataKey="rate"
-                  stroke="#10b981"
-                  strokeWidth={2}
-                  fill="url(#colorRate)"
-                  name="rate"
-                />
+                <Area type="monotone" dataKey="rate" stroke="#10b981" strokeWidth={2} fill="url(#colorRate)" name="rate" />
               </AreaChart>
             </ResponsiveContainer>
           </CardContent>
         </Card>
       </div>
 
-      {/* By source + top PVs */}
+      {/* Top clientes + PVs */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base">Origen de los items</CardTitle>
+            <CardTitle className="text-base">Top 10 clientes</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-3">
-              <SourceBar label="Almacén (sync)" value={data.bySource.almacen} total={data.total} color="bg-blue-500" />
-              <SourceBar label="Manual" value={data.bySource.manual} total={data.total} color="bg-purple-500" />
-              <SourceBar label="Excel" value={data.bySource.excel} total={data.total} color="bg-orange-500" />
-            </div>
+            {data.topClientes.length === 0 ? (
+              <div className="text-sm text-muted-foreground text-center py-8">Sin datos</div>
+            ) : (
+              <div className="space-y-2 max-h-[280px] overflow-y-auto">
+                {data.topClientes.map((c, i) => (
+                  <div key={c.cliente} className="flex items-center gap-3">
+                    <span className="text-xs text-muted-foreground w-6">{i + 1}.</span>
+                    <span className="text-sm flex-1 truncate" title={c.cliente}>{c.cliente}</span>
+                    <Badge variant="secondary" className="tabular-nums">{c.count}</Badge>
+                  </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base">Top 10 PVs con más items</CardTitle>
+            <CardTitle className="text-base">Top 10 PVs con más partidas</CardTitle>
           </CardHeader>
           <CardContent>
-            {data.byPv.length === 0 ? (
+            {data.topPvs.length === 0 ? (
               <div className="text-sm text-muted-foreground text-center py-8">Sin datos</div>
             ) : (
               <div className="space-y-2 max-h-[280px] overflow-y-auto">
-                {data.byPv.map((pv, i) => (
-                  <div key={pv.pv} className="flex items-center gap-3">
+                {data.topPvs.map((p, i) => (
+                  <div key={p.pv} className="flex items-center gap-3">
                     <span className="text-xs text-muted-foreground w-6">{i + 1}.</span>
-                    <span className="font-mono text-sm flex-1 truncate">{pv.pv}</span>
-                    <Badge variant="secondary" className="tabular-nums">{pv.count}</Badge>
+                    <span className="font-mono text-sm flex-1 truncate">{p.pv}</span>
+                    <Badge variant="secondary" className="tabular-nums">{p.count}</Badge>
                   </div>
                 ))}
               </div>
@@ -219,7 +205,7 @@ function StatCard({ icon, label, value, tone }: {
   icon: React.ReactNode
   label: string
   value: number | string
-  tone: 'default' | 'green' | 'lime' | 'yellow' | 'red'
+  tone: 'default' | 'green' | 'lime' | 'yellow' | 'red' | 'blue'
 }) {
   const toneClass = {
     default: 'border-border',
@@ -227,6 +213,7 @@ function StatCard({ icon, label, value, tone }: {
     lime: 'border-lime-300 bg-lime-50/50 dark:bg-lime-900/20',
     yellow: 'border-yellow-300 bg-yellow-50/50 dark:bg-yellow-900/20',
     red: 'border-red-300 bg-red-50/50 dark:bg-red-900/20',
+    blue: 'border-blue-300 bg-blue-50/50 dark:bg-blue-900/20',
   }[tone]
   return (
     <Card className={`${toneClass}`}>
@@ -253,21 +240,6 @@ function SyncCard({ title, status }: { title: string; status: { status: string; 
       </div>
       <div className="text-xs text-muted-foreground mb-1">{formatDateTime(status.createdAt)}</div>
       <div className="text-xs truncate" title={status.message}>{status.message}</div>
-    </div>
-  )
-}
-
-function SourceBar({ label, value, total, color }: { label: string; value: number; total: number; color: string }) {
-  const pct = total > 0 ? Math.round((value / total) * 100) : 0
-  return (
-    <div>
-      <div className="flex items-center justify-between text-sm mb-1">
-        <span>{label}</span>
-        <span className="text-muted-foreground tabular-nums">{value} ({pct}%)</span>
-      </div>
-      <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
-        <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
-      </div>
     </div>
   )
 }

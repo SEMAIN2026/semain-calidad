@@ -1,33 +1,21 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { computeTimeInfo } from '@/lib/time-tracking'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
   const items = await db.calidadItem.findMany()
 
-  const enriched = items.map(it => ({
-    ...it,
-    time: computeTimeInfo({
-      createdAt: it.createdAt,
-      estimatedDays: it.estimatedDays,
-      status: it.status,
-      shippingStatus: it.shippingStatus,
-      shippingSynced: it.shippingSynced,
-    }),
-  }))
-
   const total = items.length
+  const entregado = items.filter(i => i.estado === 'Entregado').length
+  const atrasado = items.filter(i => i.estado === 'ATRASADO').length
+  const porVencer = items.filter(i => i.estado === 'POR VENCER').length
+  const enTiempo = items.filter(i => i.estado === 'EN TIEMPO').length
+  const revisar = items.filter(i => i.estado === 'REVISAR' || i.estado === 'REVISAR TE').length
+
   const shippedOnTime = items.filter(i => i.shippingStatus === 'a_tiempo').length
   const shippedLate = items.filter(i => i.shippingStatus === 'tarde').length
-  const notShipped = items.filter(i => !i.shippingStatus || i.shippingStatus === 'no_enviado').length
-  const warning = enriched.filter(i => i.time.state === 'warning').length
-  const overdue = enriched.filter(i => i.time.state === 'overdue').length
-  const pending = items.filter(i => i.status === 'pendiente').length
-  const inProcess = items.filter(i => i.status === 'en_proceso').length
-  const completed = items.filter(i => i.status === 'completado').length
-  const enviado = items.filter(i => i.status === 'enviado').length
+  const notShipped = items.filter(i => !i.shippingStatus).length
 
   const bySource = {
     manual: items.filter(i => i.source === 'manual').length,
@@ -35,11 +23,24 @@ export async function GET() {
     excel: items.filter(i => i.source === 'excel').length,
   }
 
-  const byPvMap = new Map<string, number>()
+  // Top clientes
+  const clienteMap = new Map<string, number>()
   for (const it of items) {
-    byPvMap.set(it.pvNumber, (byPvMap.get(it.pvNumber) || 0) + 1)
+    if (it.cliente) {
+      clienteMap.set(it.cliente, (clienteMap.get(it.cliente) || 0) + 1)
+    }
   }
-  const byPv = Array.from(byPvMap.entries())
+  const topClientes = Array.from(clienteMap.entries())
+    .map(([cliente, count]) => ({ cliente, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10)
+
+  // Top PVs
+  const pvMap = new Map<string, number>()
+  for (const it of items) {
+    pvMap.set(it.pvNumber, (pvMap.get(it.pvNumber) || 0) + 1)
+  }
+  const topPvs = Array.from(pvMap.entries())
     .map(([pv, count]) => ({ pv, count }))
     .sort((a, b) => b.count - a.count)
     .slice(0, 10)
@@ -47,15 +48,16 @@ export async function GET() {
   const totalShipped = shippedOnTime + shippedLate
   const onTimeRate = totalShipped > 0 ? Math.round((shippedOnTime / totalShipped) * 100) : 0
 
-  // ---------- CHART: Distribution by status (donut) ----------
+  // Distribution by estado (donut)
   const statusDistribution = [
-    { name: 'Pendiente', value: pending, color: '#94a3b8' },
-    { name: 'En proceso', value: inProcess, color: '#3b82f6' },
-    { name: 'Completado', value: completed, color: '#6366f1' },
-    { name: 'Enviado', value: enviado, color: '#10b981' },
+    { name: 'Entregado', value: entregado, color: '#10b981' },
+    { name: 'Atrasado', value: atrasado, color: '#ef4444' },
+    { name: 'Por vencer', value: porVencer, color: '#f59e0b' },
+    { name: 'En tiempo', value: enTiempo, color: '#3b82f6' },
+    { name: 'Revisar', value: revisar, color: '#8b5cf6' },
   ].filter(s => s.value > 0)
 
-  // ---------- CHART: On-time rate over time (line, last 14 days) ----------
+  // On-time rate trend (last 14 days)
   const today = new Date()
   today.setHours(0, 0, 0, 0)
   const days: { date: string; label: string; onTime: number; late: number; total: number; rate: number }[] = []
@@ -86,17 +88,17 @@ export async function GET() {
 
   return NextResponse.json({
     total,
+    entregado,
+    atrasado,
+    porVencer,
+    enTiempo,
+    revisar,
     shippedOnTime,
     shippedLate,
     notShipped,
-    warning,
-    overdue,
-    pending,
-    inProcess,
-    completed,
-    enviado,
     bySource,
-    byPv,
+    topClientes,
+    topPvs,
     onTimeRate,
     statusDistribution,
     onTimeTrend: days,

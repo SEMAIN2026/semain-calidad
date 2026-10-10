@@ -1,6 +1,6 @@
 // Prisma schema - Semain Calidad
-// Uses libsql driver adapter (works with both local file: URLs and Turso libsql:// URLs)
-// Connection is configured at runtime in src/lib/db.ts via @prisma/adapter-libsql.
+// Estructura basada en el Excel "SEGUIMIENTO A PV.xlsx"
+// Una fila por cada item/partida de cada PV.
 
 generator client {
   provider = "prisma-client-js"
@@ -11,37 +11,54 @@ datasource db {
 }
 
 model CalidadItem {
-  id              String   @id @default(cuid())
-  // Origin info (from Almacen PV or manual)
-  pvNumber        String   // PV number from Almacen
-  itemNumber      String   // Item line number within the PV
-  description     String   // Product description
-  quantity        Int      @default(1)
-  // Status & time tracking
-  status          String   @default("pendiente") // pendiente | en_proceso | completado | enviado
-  estimatedDays   Int      @default(7) // Time budget in days for quality check
-  // Shipping info (synced from Shipping Notice)
-  shippingDate    DateTime? // Fecha que se envió
-  shippingStatus  String?   // a_tiempo | tarde | no_enviado
-  shippingSynced  Boolean   @default(false)
-  // Manual override tracking
-  isManual        Boolean   @default(false)
-  notes           String?
-  // Source tracking
-  source          String   @default("manual") // manual | almacen | excel
-  // Timestamps
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id                      String   @id @default(cuid())
 
-  @@unique([pvNumber, itemNumber])
+  // --- Identificación del item (del Excel / Almacén) ---
+  pvNumber                String   // "PV 1290" (con espacio, como en el Excel)
+  itemLine                Int      @default(1) // Número de línea/partida dentro del PV
+  cliente                 String?  // "HUTCHINSON TRANSFERENCIA..."
+  concepto                String   // "MANDRIL CON TAPAS | G90A5-0E020 MANDREL"
+  clave                   String?  // "FIX-NVO-01", "MAN-NVO-01"
+  cantidad                Int      @default(1)
+
+  // --- Fechas y tiempos (del Excel) ---
+  fechaPv                 DateTime? // Fecha de la PV
+  fechaInicio             DateTime? // Fecha de inicio de producción
+  teTexto                 String?  // "3 SEMANAS", "INMEDIATO" (texto del PDF)
+  teDias                  Int?     // 21, 35 (TE convertido a días)
+  fechaEntregaEstimada    DateTime? // Fecha calculada de entrega
+  fechaReprogramada       DateTime? // Si se reprogramó la entrega
+
+  // --- Estado calculado (del Excel) ---
+  estado                  String   @default("EN TIEMPO") // ATRASADO | POR VENCER | EN TIEMPO | REVISAR TE | REVISAR | Entregado
+  embarque                String?  // "x" si ya se envió
+
+  // --- Shipping (sync desde Shipping Notice) ---
+  shippingDate            DateTime? // Fecha real de envío (del Shipping Notice)
+  shippingStatus          String?   // a_tiempo | tarde | no_enviado
+  shippingSynced          Boolean   @default(false)
+  guia                    String?  // Número de guía
+  paqueteria              String?  // DHL, ESTAFETA, etc.
+
+  // --- Metadata ---
+  source                  String   @default("manual") // manual | almacen | excel
+  isManual                Boolean  @default(false)
+  notes                   String?
+  archivo                 String?  // "PV1290.pdf"
+
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  @@unique([pvNumber, itemLine])
   @@index([pvNumber])
-  @@index([status])
+  @@index([estado])
   @@index([shippingStatus])
+  @@index([cliente])
 }
 
 model SyncLog {
   id          String   @id @default(cuid())
-  source      String   // almacen | shipping
+  source      String   // almacen | shipping | excel
   status      String   // success | error
   message     String
   itemsCount  Int      @default(0)

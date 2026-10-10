@@ -5,10 +5,15 @@ export const dynamic = 'force-dynamic'
 
 /**
  * Refresh shipping date for an item.
- * Used when the user clicks "Actualizar fecha" because the date sometimes changes
- * after the initial sync.
+ * Used when the user clicks "Actualizar fecha" because the date sometimes changes.
  *
- * Body: { shippingDate?: string (ISO), shippingStatus?: 'a_tiempo' | 'tarde' | 'no_enviado' | null }
+ * Body: {
+ *   shippingDate?: string (ISO) | null,
+ *   shippingStatus?: 'a_tiempo' | 'tarde' | 'no_enviado' | null,
+ *   fechaReprogramada?: string (ISO) | null,
+ *   guia?: string | null,
+ *   paqueteria?: string | null,
+ * }
  */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -30,12 +35,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       data.shippingDate = d
     }
   }
-
-  if ('shippingStatus' in body) {
-    data.shippingStatus = body.shippingStatus || null
+  if ('shippingStatus' in body) data.shippingStatus = body.shippingStatus || null
+  if ('fechaReprogramada' in body) {
+    data.fechaReprogramada = body.fechaReprogramada ? new Date(body.fechaReprogramada) : null
   }
-
-  // Mark as manually updated (not from sync)
+  if ('guia' in body) data.guia = body.guia || null
+  if ('paqueteria' in body) data.paqueteria = body.paqueteria || null
   data.shippingSynced = false
 
   const updated = await db.calidadItem.update({ where: { id }, data })

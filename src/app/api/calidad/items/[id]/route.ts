@@ -19,31 +19,29 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   if (!existing) return NextResponse.json({ error: 'No encontrado' }, { status: 404 })
 
   const data: any = {}
-  for (const k of [
-    'pvNumber', 'itemNumber', 'description', 'notes', 'status',
-  ]) {
+  for (const k of ['pvNumber', 'cliente', 'concepto', 'clave', 'teTexto', 'estado', 'embarque', 'notes', 'archivo']) {
     if (k in body) data[k] = body[k] === null ? null : String(body[k])
   }
-  if ('quantity' in body) data.quantity = Number(body.quantity) || 1
-  if ('estimatedDays' in body) data.estimatedDays = Number(body.estimatedDays) || 7
-  if ('shippingDate' in body) {
-    data.shippingDate = body.shippingDate ? new Date(body.shippingDate) : null
+  if ('itemLine' in body) data.itemLine = Number(body.itemLine) || 1
+  if ('cantidad' in body) data.cantidad = Number(body.cantidad) || 1
+  if ('teDias' in body) data.teDias = body.teDias ? Number(body.teDias) : null
+  for (const k of ['fechaPv', 'fechaInicio', 'fechaEntregaEstimada', 'fechaReprogramada', 'shippingDate']) {
+    if (k in body) data[k] = body[k] ? new Date(body[k]) : null
   }
-  if ('shippingStatus' in body) {
-    data.shippingStatus = body.shippingStatus || null
-  }
+  if ('shippingStatus' in body) data.shippingStatus = body.shippingStatus || null
   if ('shippingSynced' in body) data.shippingSynced = !!body.shippingSynced
+  if ('guia' in body) data.guia = body.guia || null
+  if ('paqueteria' in body) data.paqueteria = body.paqueteria || null
 
-  // If key fields changed, check uniqueness against other rows
-  if (data.pvNumber || data.itemNumber) {
+  if (data.pvNumber || data.itemLine) {
     const pv = data.pvNumber ?? existing.pvNumber
-    const it = data.itemNumber ?? existing.itemNumber
+    const line = data.itemLine ?? existing.itemLine
     const dup = await db.calidadItem.findUnique({
-      where: { pvNumber_itemNumber: { pvNumber: pv, itemNumber: it } },
+      where: { pvNumber_itemLine: { pvNumber: pv, itemLine: line } },
     })
     if (dup && dup.id !== id) {
       return NextResponse.json(
-        { error: `Ya existe otro item con PV ${pv} e item ${it}` },
+        { error: `Ya existe otro item con PV ${pv} línea ${line}` },
         { status: 409 }
       )
     }
