@@ -2,23 +2,19 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import {
   fetchShippings,
-  getMatchingText,
   extractPVReferences,
-  getShippingOutcome,
+  getItemDescriptions,
+  getShippingDate,
+  getTrackingInfo,
 } from '@/lib/shipping-client'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
+export const maxDuration = 300
+export const runtime = 'nodejs'
 
 /**
- * Sync from Shipping Notice:
- *   1. Login to https://semain-shipping-notice.vercel.app
- *   2. GET /api/shippings (Control de Envíos records)
- *   3. For each shipping record, build a matching text and try to find CalidadItems
- *      whose pvNumber appears in the text or whose description matches.
- *   4. Update matched CalidadItems with shippingDate + shippingStatus.
- *
- * We only UPDATE shipping fields; we never touch Almacen-managed description/quantity.
+ * Sync from Shipping Notice (individual endpoint).
+ * The unified endpoint /api/sync/all is preferred.
  */
 export async function POST() {
   const startedAt = Date.now()
@@ -31,64 +27,72 @@ export async function POST() {
     const records = await fetchShippings()
     totalRecords = records.length
 
-    // Load all CalidadItems once for matching
     const allItems = await db.calidadItem.findMany()
-    const byPv = new Map<string, typeof allItems>()
-    for (const it of allItems) {
-      const arr = byPv.get(it.pvNumber) || []
-      arr.push(it)
-      byPv.set(it.pvNumber, arr)
-    }
 
     for (const rec of records) {
-      const text = getMatchingText(rec)
-      const pvRefs = extractPVReferences(text)
-      const outcome = getShippingOutcome(rec)
+      const shipDate = getShippingDate(rec)
+      const { guia, paqueteria } = getTrackingInfo(rec)
+      const itemDescriptions = getItemDescriptions(rec)
 
-      const candidateItems: typeof allItems = []
-      // Match by PV reference first
-      for (const ref of pvRefs) {
-        const norm = ref.replace(/^PV/i, '')
-        for (const [pvNum, arr] of byPv.entries()) {
-          if (pvNumberMatches(pvNum, norm)) candidateItems.push(...arr)
+      if (!shipDate) {
+        notMatched++
+        continue
+      }
+
+      const pvDigitsSet = new Set<string>()
+      for (const desc of itemDescriptions) {
+        const refs = extractPVReferences(desc)
+        refs.forEach(d => pvDigitsSet.add(d))
+      }
+
+      const matchedItems: typeof allItems = []
+      for (const digits of pvDigitsSet) {
+        for (const it of allItems) {
+          const itemDigits = String(it.pvNumber).replace(/\D/g, '')
+          if (itemDigits === digits && !matchedItems.find(m => m.id === it.id)) {
+            matchedItems.push(it)
+          }
         }
       }
-      // Fallback: match by description substring
-      if (!candidateItems.length) {
-        const productText = String(rec.producto || rec.descripcion || '').toLowerCase()
-        if (productText.length > 3) {
-          for (const it of allItems) {
-            const desc = it.description.toLowerCase()
-            if (desc && (desc.includes(productText) || productText.includes(desc))) {
-              candidateItems.push(it)
+
+      if (!matchedItems.length && itemDescriptions.length > 0) {
+        for (const it of allItems) {
+          const concepto = it.concepto.toLowerCase()
+          if (!concepto) continue
+          for (const desc of itemDescriptions) {
+            const descLower = desc.toLowerCase()
+            if (concepto.includes(descLower) || descLower.includes(concepto)) {
+              if (!matchedItems.find(m => m.id === it.id)) {
+                matchedItems.push(it)
+              }
+              break
             }
           }
         }
       }
 
-      if (!candidateItems.length) {
+      if (!matchedItems.length) {
         notMatched++
         continue
       }
 
-      // Deduplicate
-      const seen = new Set<string>()
-      for (const it of candidateItems) {
-        if (seen.has(it.id)) continue
-        seen.add(it.id)
-
-        const newStatus = !outcome.shipped
-          ? 'no_enviado'
-          : outcome.onTime ? 'a_tiempo' : 'tarde'
+      for (const it of matchedItems) {
+        let onTime = true
+        if (shipDate && it.fechaEntregaEstimada) {
+          onTime = shipDate <= it.fechaEntregaEstimada
+        }
+        const newStatus = onTime ? 'a_tiempo' : 'tarde'
 
         await db.calidadItem.update({
           where: { id: it.id },
           data: {
-            shippingDate: outcome.date,
+            shippingDate: shipDate,
             shippingStatus: newStatus,
             shippingSynced: true,
-            // If shipped, also flip the workflow status
-            status: outcome.shipped ? 'enviado' : it.status,
+            guia,
+            paqueteria,
+            estado: 'Entregado',
+            embarque: 'x',
           },
         })
         matched++
@@ -104,7 +108,7 @@ export async function POST() {
     data: {
       source: 'shipping',
       status: error ? 'error' : 'success',
-      message: error || `Sync OK: ${totalRecords} registros, ${matched} items matcheados, ${notMatched} sin match`,
+      message: error || `Sync OK: ${totalRecords} registros, ${matched} matcheados, ${notMatched} sin match`,
       itemsCount: matched,
     },
   })
@@ -114,11 +118,4 @@ export async function POST() {
     error,
     stats: { totalRecords, matched, notMatched, durationMs },
   })
-}
-
-function pvNumberMatches(a: string, b: string): boolean {
-  const na = String(a).replace(/\D/g, '')
-  const nb = String(b).replace(/\D/g, '')
-  if (!na || !nb) return false
-  return na === nb
 }
