@@ -14,16 +14,19 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 export const runtime = 'nodejs'
 
+const BATCH_SIZE = 50
+
+/** Execute async operations in batches to avoid overwhelming the DB. */
+async function batchProcess<T>(items: T[], fn: (item: T) => Promise<void>) {
+  for (let i = 0; i < items.length; i += BATCH_SIZE) {
+    const batch = items.slice(i, i + BATCH_SIZE)
+    await Promise.all(batch.map(fn))
+  }
+}
+
 /**
  * Unified sync: runs Almacén sync first, then Shipping sync.
- *
- * Almacén sync: fetches PVs and marks items as "embarque=x" if their PV
- * appears in Almacén's records.
- *
- * Shipping sync: fetches shipping records, extracts product descriptions
- * from items[].pkg, finds PV number references, and matches against
- * CalidadItems. Updates shippingDate, shippingStatus, guia, paqueteria.
- * Determines a_tiempo/tarde by comparing ship_date with fechaEntregaEstimada.
+ * Processes DB operations in batches of 50 for speed.
  */
 export async function POST() {
   const startedAt = Date.now()
@@ -40,23 +43,47 @@ export async function POST() {
     const pvs = await fetchPVs()
     almacenResult.pvsFound = pvs.length
 
+    // OPTIMIZATION: Load all CalidadItems ONCE (instead of 160 separate queries)
+    const allItems = await db.calidadItem.findMany({
+      where: { parentId: null }, // Only parents (children inherit from parent)
+      select: { id: true, pvNumber: true, embarque: true },
+    })
+
+    // Build a map of pvDigits -> item IDs (in memory, fast)
+    const pvDigitsToItems = new Map<string, string[]>()
+    for (const it of allItems) {
+      const digits = String(it.pvNumber).replace(/\D/g, '')
+      if (!digits) continue
+      const arr = pvDigitsToItems.get(digits) || []
+      arr.push(it.id)
+      pvDigitsToItems.set(digits, arr)
+    }
+
+    // Collect all Almacen PV digit sets
+    const almacenDigitsSet = new Set<string>()
     for (const pv of pvs) {
       const pvDigits = String(pv.pvNumber).replace(/\D/g, '')
-      if (!pvDigits) continue
+      if (pvDigits) almacenDigitsSet.add(pvDigits)
+    }
 
-      const items = await db.calidadItem.findMany({
-        where: { pvNumber: { contains: pvDigits } },
-      })
-      for (const item of items) {
-        if (!item.embarque) {
-          await db.calidadItem.update({
-            where: { id: item.id },
-            data: { embarque: 'x' },
-          })
-          almacenResult.updated++
-        }
+    // Find all items that need to be updated (embarque not set, PV exists in Almacen)
+    const itemsToUpdate: string[] = []
+    for (const it of allItems) {
+      if (it.embarque) continue // already marked
+      const digits = String(it.pvNumber).replace(/\D/g, '')
+      if (almacenDigitsSet.has(digits)) {
+        itemsToUpdate.push(it.id)
       }
     }
+
+    // Batch update: mark all matching items as embarque=x in groups of 50
+    await batchProcess(itemsToUpdate, async (id) => {
+      await db.calidadItem.update({
+        where: { id },
+        data: { embarque: 'x' },
+      })
+    })
+    almacenResult.updated = itemsToUpdate.length
     almacenResult.ok = true
   } catch (e: any) {
     almacenResult.error = e?.message || String(e)
@@ -79,13 +106,28 @@ export async function POST() {
     totalRecords: 0,
     matched: 0,
     notMatched: 0,
+    partialsCreated: 0,
   }
 
   try {
     const records = await fetchShippings()
     shippingResult.totalRecords = records.length
 
+    // Load all CalidadItems ONCE (with all fields needed for matching + updates)
     const allItems = await db.calidadItem.findMany()
+    // Build a map of pvDigits -> items for fast lookup
+    const pvDigitsMap = new Map<string, typeof allItems>()
+    for (const it of allItems) {
+      const digits = String(it.pvNumber).replace(/\D/g, '')
+      if (!digits) continue
+      const arr = pvDigitsMap.get(digits) || []
+      arr.push(it)
+      pvDigitsMap.set(digits, arr)
+    }
+
+    // Collect all update operations and create operations
+    const updates: { id: string; data: any }[] = []
+    const creates: { data: any }[] = []
 
     for (const rec of records) {
       const shipDate = getShippingDate(rec)
@@ -110,13 +152,15 @@ export async function POST() {
       const extraRefs = extractPVReferences(extraText)
       extraRefs.forEach(d => pvDigitsSet.add(d))
 
-      // Find matching CalidadItems by PV number digits
+      // Find matching CalidadItems by PV number digits (using map, fast)
       const matchedItems: typeof allItems = []
+      const seenIds = new Set<string>()
       for (const digits of pvDigitsSet) {
-        for (const it of allItems) {
-          const itemDigits = String(it.pvNumber).replace(/\D/g, '')
-          if (itemDigits === digits && !matchedItems.find(m => m.id === it.id)) {
+        const candidates = pvDigitsMap.get(digits) || []
+        for (const it of candidates) {
+          if (!seenIds.has(it.id)) {
             matchedItems.push(it)
+            seenIds.add(it.id)
           }
         }
       }
@@ -135,11 +179,11 @@ export async function POST() {
             scored.push({ item: it, score: bestScore })
           }
         }
-        // Sort by score descending and take the best matches
         scored.sort((a, b) => b.score - a.score)
         for (const s of scored) {
-          if (!matchedItems.find(m => m.id === s.item.id)) {
+          if (!seenIds.has(s.item.id)) {
             matchedItems.push(s.item)
+            seenIds.add(s.item.id)
           }
         }
       }
@@ -149,17 +193,15 @@ export async function POST() {
         continue
       }
 
-      // Update each matched item, handling partials
+      // Process each matched item (collect operations, execute in batch later)
       for (const it of matchedItems) {
-        // Determine onTime: compare ship date with estimated delivery date
         let onTime = true
         if (shipDate && it.fechaEntregaEstimada) {
           onTime = shipDate <= it.fechaEntregaEstimada
         }
         const newStatus = onTime ? 'a_tiempo' : 'tarde'
 
-        // Try to find the specific shipping item that matched this calidadItem
-        // by re-scoring each shipping item description against this item's concepto
+        // Find the specific shipping item that matched this calidadItem
         let matchedShippingItem: { qty?: string | number; pkg?: string } | null = null
         let bestItemScore = 0
         for (const sItem of (rec.items || [])) {
@@ -171,7 +213,6 @@ export async function POST() {
           }
         }
 
-        // Parse the shipped quantity from the matched shipping item
         let shippedQty = 0
         if (matchedShippingItem?.qty) {
           shippedQty = parseInt(String(matchedShippingItem.qty), 10) || 0
@@ -180,52 +221,43 @@ export async function POST() {
         const totalQty = it.cantidad || 1
         const alreadyShipped = it.cantidadEnviada || 0
 
-        // Skip if this item was already fully shipped (avoid re-matching)
+        // Skip if this item was already fully shipped
         if (alreadyShipped >= totalQty) {
           continue
         }
 
-        // Determine if this is a partial shipment
         const isPartial = shippedQty > 0 && shippedQty < (totalQty - alreadyShipped)
 
         if (isPartial) {
-          // PARTIAL: update parent with shippedQty, create child with remaining
           const remaining = totalQty - alreadyShipped - shippedQty
           if (remaining > 0) {
-            // Update parent: accumulate shipped quantity
-            await db.calidadItem.update({
-              where: { id: it.id },
+            // Queue parent update
+            updates.push({
+              id: it.id,
               data: {
                 cantidadEnviada: alreadyShipped + shippedQty,
                 shippingDate: shipDate,
                 shippingStatus: newStatus,
                 shippingSynced: true,
-                guia: guia,
-                paqueteria: paqueteria,
+                guia,
+                paqueteria,
                 embarque: 'x',
-                // Keep estado as EN TIEMPO/ATRASADO since there's remaining
                 estado: alreadyShipped + shippedQty >= totalQty ? 'Entregado' : it.estado,
               },
             })
 
-            // Create child item with remaining quantity
-            // Check if a child already exists for this parent with similar characteristics
-            const existingChild = await db.calidadItem.findFirst({
-              where: {
-                parentId: it.id,
-                cantidad: remaining,
-                esParcial: true,
-              },
-            })
+            // Check if child already exists (in memory, from allItems)
+            const existingChild = allItems.find(
+              c => c.parentId === it.id && c.cantidad === remaining && c.esParcial
+            )
 
             if (!existingChild) {
-              const maxLineItem = await db.calidadItem.findFirst({
-                where: { pvNumber: it.pvNumber },
-                orderBy: { itemLine: 'desc' },
-              })
-              const newItemLine = (maxLineItem?.itemLine || 0) + 1
+              // Find max itemLine for this PV (in memory)
+              const pvItems = allItems.filter(a => a.pvNumber === it.pvNumber)
+              const maxLine = pvItems.reduce((max, a) => Math.max(max, a.itemLine), 0)
+              const newItemLine = maxLine + 1
 
-              await db.calidadItem.create({
+              creates.push({
                 data: {
                   pvNumber: it.pvNumber,
                   itemLine: newItemLine,
@@ -249,18 +281,19 @@ export async function POST() {
                   archivo: it.archivo,
                 },
               })
+              shippingResult.partialsCreated++
             }
           }
         } else {
-          // FULL shipment (or qty not specified): mark as fully delivered
-          await db.calidadItem.update({
-            where: { id: it.id },
+          // FULL shipment: mark as fully delivered
+          updates.push({
+            id: it.id,
             data: {
               shippingDate: shipDate,
               shippingStatus: newStatus,
               shippingSynced: true,
-              guia: guia,
-              paqueteria: paqueteria,
+              guia,
+              paqueteria,
               estado: 'Entregado',
               embarque: 'x',
               cantidadEnviada: totalQty,
@@ -270,6 +303,17 @@ export async function POST() {
         shippingResult.matched++
       }
     }
+
+    // Execute all updates in batches of 50
+    await batchProcess(updates, async (u) => {
+      await db.calidadItem.update({ where: { id: u.id }, data: u.data })
+    })
+
+    // Execute all creates in batches of 50
+    await batchProcess(creates, async (c) => {
+      await db.calidadItem.create({ data: c.data })
+    })
+
     shippingResult.ok = true
   } catch (e: any) {
     shippingResult.error = e?.message || String(e)
@@ -280,7 +324,7 @@ export async function POST() {
       source: 'shipping',
       status: shippingResult.error ? 'error' : 'success',
       message: shippingResult.error
-        || `Sync OK: ${shippingResult.totalRecords} registros, ${shippingResult.matched} matcheados, ${shippingResult.notMatched} sin match`,
+        || `Sync OK: ${shippingResult.totalRecords} registros, ${shippingResult.matched} matcheados, ${shippingResult.partialsCreated} parciales creados, ${shippingResult.notMatched} sin match`,
       itemsCount: shippingResult.matched,
     },
   })
