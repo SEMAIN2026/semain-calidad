@@ -38,6 +38,10 @@ export async function GET(req: NextRequest) {
   const pv = searchParams.get('pv')
   const cliente = searchParams.get('cliente')
   const q = searchParams.get('q')
+  // Date filters (ISO strings)
+  const dateFrom = searchParams.get('dateFrom')
+  const dateTo = searchParams.get('dateTo')
+  const dateField = searchParams.get('dateField') || 'fechaPv' // fechaPv | fechaEntregaEstimada | shippingDate
 
   const where: any = {}
   if (estado) where.estado = estado
@@ -52,6 +56,15 @@ export async function GET(req: NextRequest) {
       { clave: { contains: q } },
       { notes: { contains: q } },
     ]
+  }
+  if (dateFrom || dateTo) {
+    where[dateField] = {}
+    if (dateFrom) where[dateField].gte = new Date(dateFrom)
+    if (dateTo) {
+      const endOfDay = new Date(dateTo)
+      endOfDay.setHours(23, 59, 59, 999)
+      where[dateField].lte = endOfDay
+    }
   }
 
   const items = await db.calidadItem.findMany({

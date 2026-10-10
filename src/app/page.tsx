@@ -9,6 +9,7 @@ import { RefreshCw, Upload, Server, LayoutDashboard, Table2, Download, X } from 
 import { formatDateTime } from '@/lib/time-tracking'
 import { DashboardTab, type DashboardData, type SyncStatus } from '@/components/calidad/dashboard-tab'
 import { PvsTab } from '@/components/calidad/pvs-tab'
+import { DateRangeFilter, DEFAULT_DATE_RANGE, type DateRange } from '@/components/calidad/date-range-filter'
 
 interface CalidadItem {
   id: string
@@ -51,6 +52,7 @@ export default function CalidadPage() {
   const [autoSynced, setAutoSynced] = useState(false)
   const [installPrompt, setInstallPrompt] = useState<any>(null)
   const [showInstallBanner, setShowInstallBanner] = useState(false)
+  const [dateRange, setDateRange] = useState<DateRange>(DEFAULT_DATE_RANGE)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // PWA install prompt handler
@@ -84,10 +86,19 @@ export default function CalidadPage() {
     localStorage.setItem('pwa-install-dismissed', '1')
   }
 
+  const buildDateParams = useCallback(() => {
+    const params = new URLSearchParams()
+    if (dateRange.dateFrom) params.set('dateFrom', dateRange.dateFrom)
+    if (dateRange.dateTo) params.set('dateTo', dateRange.dateTo)
+    if (dateRange.dateField) params.set('dateField', dateRange.dateField)
+    return params.toString()
+  }, [dateRange])
+
   const loadItems = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch('/api/calidad/items', { cache: 'no-store' })
+      const qs = buildDateParams()
+      const res = await fetch(`/api/calidad/items${qs ? `?${qs}` : ''}`, { cache: 'no-store' })
       const json = await res.json()
       setItems(json.data || [])
     } catch (e: any) {
@@ -95,7 +106,7 @@ export default function CalidadPage() {
     } finally {
       setLoading(false)
     }
-  }, [toast])
+  }, [toast, buildDateParams])
 
   const loadSyncStatus = useCallback(async () => {
     try {
@@ -107,11 +118,12 @@ export default function CalidadPage() {
 
   const loadDashboard = useCallback(async () => {
     try {
-      const res = await fetch('/api/dashboard', { cache: 'no-store' })
+      const qs = buildDateParams()
+      const res = await fetch(`/api/dashboard${qs ? `?${qs}` : ''}`, { cache: 'no-store' })
       const json = await res.json()
       setDashboard(json)
     } catch {}
-  }, [])
+  }, [buildDateParams])
 
   const runSync = useCallback(async (showToast = true) => {
     setSyncing(true)
@@ -205,6 +217,7 @@ export default function CalidadPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2 ml-auto">
+            <DateRangeFilter value={dateRange} onChange={setDateRange} />
             <input
               ref={fileInputRef}
               type="file"

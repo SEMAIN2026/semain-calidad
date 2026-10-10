@@ -1,10 +1,26 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
-export async function GET() {
-  const items = await db.calidadItem.findMany()
+export async function GET(req: NextRequest) {
+  const { searchParams } = new URL(req.url)
+  const dateFrom = searchParams.get('dateFrom')
+  const dateTo = searchParams.get('dateTo')
+  const dateField = searchParams.get('dateField') || 'fechaPv'
+
+  const where: any = {}
+  if (dateFrom || dateTo) {
+    where[dateField] = {}
+    if (dateFrom) where[dateField].gte = new Date(dateFrom)
+    if (dateTo) {
+      const endOfDay = new Date(dateTo)
+      endOfDay.setHours(23, 59, 59, 999)
+      where[dateField].lte = endOfDay
+    }
+  }
+
+  const items = await db.calidadItem.findMany({ where })
 
   const total = items.length
   const entregado = items.filter(i => i.estado === 'Entregado').length
