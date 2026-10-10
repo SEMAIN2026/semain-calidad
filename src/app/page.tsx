@@ -194,8 +194,8 @@ export default function CalidadPage() {
         <div className="container mx-auto px-4 py-2.5 flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2.5 mr-4">
             <img
-              src="/icons/icon-192x192.png"
-              alt="Semain"
+              src="/icons/header-logo.png"
+              alt="Semain Calidad"
               className="w-10 h-10 rounded-lg object-contain"
             />
             <div>
@@ -238,7 +238,7 @@ export default function CalidadPage() {
         {showInstallBanner && installPrompt && (
           <div className="container mx-auto px-4 pb-2">
             <div className="flex items-center gap-3 p-2.5 rounded-lg border bg-muted/50">
-              <img src="/icons/icon-192x192.png" alt="Semain" className="w-8 h-8 rounded" />
+              <img src="/icons/header-logo.png" alt="Semain Calidad" className="w-8 h-8 rounded" />
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium">Instalar Semain Calidad</p>
                 <p className="text-xs text-muted-foreground">Acceso rápido desde tu pantalla de inicio</p>
