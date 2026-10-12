@@ -41,28 +41,37 @@ export async function POST() {
     error: null as string | null,
     pvsFound: 0,
     updated: 0,
+    created: 0,
   }
 
   try {
     const pvs = await fetchPVs()
     almacenResult.pvsFound = pvs.length
 
-    // Load all items once (only parents that need embarque marking)
+    // Load ALL items (to check which PVs already exist)
     const allItemsForAlmacen = await db.calidadItem.findMany({
-      where: { parentId: null, embarque: null },
-      select: { id: true, pvNumber: true },
+      where: { parentId: null },
+      select: { id: true, pvNumber: true, embarque: true },
     })
 
-    // Build set of Almacen PV digits for in-memory matching
+    // Build set of existing PV digits
+    const existingDigitsSet = new Set<string>()
+    for (const it of allItemsForAlmacen) {
+      const d = String(it.pvNumber).replace(/\D/g, '')
+      if (d) existingDigitsSet.add(d)
+    }
+
+    // Build set of Almacen PV digits
     const almacenDigitsSet = new Set<string>()
     for (const pv of pvs) {
       const d = String(pv.pvNumber).replace(/\D/g, '')
       if (d) almacenDigitsSet.add(d)
     }
 
-    // Find items to update
+    // Find items to mark as embarque
     const itemsToUpdate: string[] = []
     for (const it of allItemsForAlmacen) {
+      if (it.embarque) continue
       const digits = String(it.pvNumber).replace(/\D/g, '')
       if (almacenDigitsSet.has(digits)) {
         itemsToUpdate.push(it.id)
@@ -74,6 +83,42 @@ export async function POST() {
       await db.calidadItem.update({ where: { id }, data: { embarque: 'x' } })
     })
     almacenResult.updated = itemsToUpdate.length
+
+    // CREATE new items for PVs that don't exist in DB yet
+    const newPvsToCreate: any[] = []
+    for (const pv of pvs) {
+      const digits = String(pv.pvNumber).replace(/\D/g, '')
+      if (!digits) continue
+      // If this PV doesn't exist in our DB, create an item for it
+      if (!existingDigitsSet.has(digits)) {
+        // Find max itemLine for this PV (should be 0 since it doesn't exist)
+        const maxLine = allItemsForAlmacen
+          .filter(it => String(it.pvNumber).replace(/\D/g, '') === digits)
+          .reduce((max, it) => Math.max(max, 0), 0)
+
+        newPvsToCreate.push({
+          pvNumber: pv.pvNumber,
+          itemLine: 1,
+          concepto: pv.subject || pv.body?.slice(0, 200) || `(PV ${pv.pvNumber})`,
+          cantidad: 1,
+          fechaPv: pv.receivedAt ? new Date(pv.receivedAt) : (pv.createdAt ? new Date(pv.createdAt) : new Date()),
+          estado: 'EN TIEMPO',
+          source: 'almacen',
+          isManual: false,
+          notes: pv.body || null,
+          embarque: 'x',
+        })
+        // Add to existing set so we don't create duplicates
+        existingDigitsSet.add(digits)
+      }
+    }
+
+    // Batch create
+    await batchProcess(newPvsToCreate, async (data) => {
+      await db.calidadItem.create({ data })
+    })
+    almacenResult.created = newPvsToCreate.length
+
     almacenResult.ok = true
   } catch (e: any) {
     almacenResult.error = e?.message || String(e)
@@ -84,7 +129,7 @@ export async function POST() {
       source: 'almacen',
       status: almacenResult.error ? 'error' : 'success',
       message: almacenResult.error
-        || `Sync OK: ${almacenResult.pvsFound} PVs, ${almacenResult.updated} items marcados`,
+        || `Sync OK: ${almacenResult.pvsFound} PVs, ${almacenResult.updated} marcados, ${almacenResult.created} nuevos`,
       itemsCount: almacenResult.updated,
     },
   })
@@ -192,17 +237,37 @@ export async function POST() {
         // ANTI-CASCADE: skip items already processed in this run
         if (processedIds.has(it.id)) continue
 
-        // Skip items already fully shipped
         const totalQty = it.cantidad || 1
         const alreadyShipped = it.cantidadEnviada || 0
-        if (alreadyShipped >= totalQty) continue
 
-        // ANTI-REPROCESS: if this item was already synced with the same shipping date,
-        // skip it (already processed in a previous sync run)
-        if (it.shippingSynced && it.shippingDate) {
+        // ANTI-REPROCESS: if this item was already synced with THIS EXACT shipping record
+        // (same date + same tracking), skip it. This prevents reprocessing the same
+        // shipping record on every sync run, but ALLOWS new shipping records to update.
+        if (it.shippingSynced && it.shippingDate && guia) {
           const existingDate = new Date(it.shippingDate).toISOString().slice(0, 10)
           const newDate = shipDate.toISOString().slice(0, 10)
-          if (existingDate === newDate) continue
+          const existingGuia = it.guia || ''
+          // Skip ONLY if both date AND tracking match (exact same shipment)
+          if (existingDate === newDate && existingGuia === guia) {
+            continue
+          }
+        }
+
+        // If item is already fully shipped AND this is the same shipment (date+guia), skip
+        if (alreadyShipped >= totalQty) {
+          // But check if this might be a DIFFERENT shipment (new date or new guia)
+          if (it.shippingSynced && it.shippingDate) {
+            const existingDate = new Date(it.shippingDate).toISOString().slice(0, 10)
+            const newDate = shipDate.toISOString().slice(0, 10)
+            const existingGuia = it.guia || ''
+            // Same shipment already recorded → skip
+            if (existingDate === newDate && (existingGuia === guia || !guia)) {
+              continue
+            }
+          }
+          // Different shipment for an already-delivered item → this is a new shipment
+          // for a restante/parcial, or a duplicate. Skip for now.
+          continue
         }
 
         let onTime = true
