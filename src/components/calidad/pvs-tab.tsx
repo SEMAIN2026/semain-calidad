@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -121,6 +121,17 @@ export function PvsTab({
       return true
     })
   }, [items, search, estadoFilter, shippingFilter])
+
+  // Pagination
+  const PAGE_SIZE = 50
+  const [page, setPage] = useState(1)
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
+  const paginated = useMemo(() => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [filtered, page])
+
+  // Reset page when filters change
+  useEffect(() => {
+    setPage(1)
+  }, [search, estadoFilter, shippingFilter])
 
   const handleDelete = async () => {
     if (!deleteId) return
@@ -251,9 +262,24 @@ export function PvsTab({
       {/* Table */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center justify-between">
+          <CardTitle className="text-base flex items-center justify-between flex-wrap gap-2">
             <span>Seguimiento de PV ({filtered.length})</span>
-            {loading && <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" />}
+            <div className="flex items-center gap-2">
+              {totalPages > 1 && (
+                <>
+                  <span className="text-xs text-muted-foreground">
+                    Pág. {page} de {totalPages}
+                  </span>
+                  <Button variant="outline" size="sm" className="h-7 px-2" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>
+                    ←
+                  </Button>
+                  <Button variant="outline" size="sm" className="h-7 px-2" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}>
+                    →
+                  </Button>
+                </>
+              )}
+              {loading && <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" />}
+            </div>
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
@@ -279,7 +305,7 @@ export function PvsTab({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filtered.map(it => (
+                {paginated.map(it => (
                   <TableRow key={it.id} className={rowColorForEstado(it.estado, it.shippingStatus)}>
                     <TableCell className="font-mono text-xs font-semibold whitespace-nowrap">{it.pvNumber}</TableCell>
                     <TableCell className="font-mono text-xs text-muted-foreground whitespace-nowrap">{it.itemLine}</TableCell>
