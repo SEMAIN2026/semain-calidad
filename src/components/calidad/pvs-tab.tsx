@@ -24,7 +24,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { useToast } from '@/hooks/use-toast'
 import {
-  RefreshCw, Plus, Pencil, Trash2, CalendarClock, Download, Search, GitBranch,
+  RefreshCw, Plus, Pencil, Trash2, CalendarClock, Download, Search, GitBranch, CalendarDays,
 } from 'lucide-react'
 import { formatDateTime, formatDate } from '@/lib/time-tracking'
 
@@ -99,10 +99,12 @@ export function PvsTab({
   const [createOpen, setCreateOpen] = useState(false)
   const [refreshOpen, setRefreshOpen] = useState(false)
   const [partialOpen, setPartialOpen] = useState(false)
+  const [entregaOpen, setEntregaOpen] = useState(false)
   const [deleteId, setDeleteId] = useState<string | null>(null)
   const [editing, setEditing] = useState<CalidadItem | null>(null)
   const [refreshTarget, setRefreshTarget] = useState<CalidadItem | null>(null)
   const [partialTarget, setPartialTarget] = useState<CalidadItem | null>(null)
+  const [entregaTarget, setEntregaTarget] = useState<CalidadItem | null>(null)
 
   const filtered = useMemo(() => {
     return items.filter(it => {
@@ -361,7 +363,10 @@ export function PvsTab({
                             <Pencil className="h-3.5 w-3.5 mr-2" /> Editar
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => { setRefreshTarget(it); setRefreshOpen(true) }}>
-                            <CalendarClock className="h-3.5 w-3.5 mr-2" /> Actualizar fecha
+                            <CalendarClock className="h-3.5 w-3.5 mr-2" /> Actualizar envío
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => { setEntregaTarget(it); setEntregaOpen(true) }}>
+                            <CalendarDays className="h-3.5 w-3.5 mr-2" /> Actualizar entrega
                           </DropdownMenuItem>
                           {!it.parentId && it.cantidad > 1 && it.cantidadEnviada < it.cantidad && (
                             <DropdownMenuItem onClick={() => { setPartialTarget(it); setPartialOpen(true) }}>
@@ -516,6 +521,37 @@ export function PvsTab({
               })
               setPartialOpen(false)
               setPartialTarget(null)
+              await onRefresh()
+              return true
+            } catch (e: any) {
+              toast({ title: 'Error', description: e?.message, variant: 'destructive' })
+              return false
+            }
+          }}
+        />
+      )}
+
+      {entregaOpen && entregaTarget && (
+        <EntregaDialog
+          key={`entrega-${entregaTarget.id}`}
+          open={entregaOpen}
+          onOpenChange={setEntregaOpen}
+          item={entregaTarget}
+          onSave={async (data) => {
+            try {
+              const res = await fetch(`/api/calidad/items/${entregaTarget.id}/update-entrega`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data),
+              })
+              const json = await res.json()
+              if (!res.ok) {
+                toast({ title: 'Error', description: json.error, variant: 'destructive' })
+                return false
+              }
+              toast({ title: 'Entrega actualizada' })
+              setEntregaOpen(false)
+              setEntregaTarget(null)
               await onRefresh()
               return true
             } catch (e: any) {
@@ -835,6 +871,79 @@ function PartialDialog({ open, onOpenChange, item, onSave }: {
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
           <Button onClick={submit}>Crear parcial</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function EntregaDialog({ open, onOpenChange, item, onSave }: {
+  open: boolean
+  onOpenChange: (o: boolean) => void
+  item: CalidadItem | null
+  onSave: (data: { fechaEntregaEstimada: string | null; fechaReprogramada: string | null; teTexto: string | null; teDias: number | null }) => Promise<boolean>
+}) {
+  const [fechaEntregaEstimada, setFechaEntregaEstimada] = useState(
+    item?.fechaEntregaEstimada ? item.fechaEntregaEstimada.slice(0, 10) : ''
+  )
+  const [fechaReprogramada, setFechaReprogramada] = useState(
+    item?.fechaReprogramada ? item.fechaReprogramada.slice(0, 10) : ''
+  )
+  const [teTexto, setTeTexto] = useState(item?.teTexto || '')
+  const [teDias, setTeDias] = useState(item?.teDias != null ? String(item.teDias) : '')
+
+  const submit = async () => {
+    await onSave({
+      fechaEntregaEstimada: fechaEntregaEstimada || null,
+      fechaReprogramada: fechaReprogramada || null,
+      teTexto: teTexto || null,
+      teDias: teDias ? Number(teDias) : null,
+    })
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Actualizar fecha de entrega</DialogTitle>
+          <DialogDescription>
+            Modifica la fecha de entrega estimada o la fecha reprogramada. El tiempo estimado (TE) también se puede ajustar.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          {item && (
+            <div className="text-xs text-muted-foreground p-2 bg-muted rounded">
+              <span className="font-mono">{item.pvNumber} #{item.itemLine}</span>
+              <br />
+              <span className="truncate block">{item.concepto}</span>
+              {item.fechaEntregaEstimada && (
+                <div className="mt-1">Entrega actual: <b>{formatDate(item.fechaEntregaEstimada)}</b></div>
+              )}
+            </div>
+          )}
+          <div className="space-y-1.5">
+            <Label className="text-xs">Fecha de entrega estimada</Label>
+            <Input type="date" value={fechaEntregaEstimada} onChange={e => setFechaEntregaEstimada(e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Fecha reprogramada (opcional)</Label>
+            <Input type="date" value={fechaReprogramada} onChange={e => setFechaReprogramada(e.target.value)} />
+            <p className="text-[10px] text-muted-foreground">Si se reprogramó la entrega, pon la nueva fecha aquí. Se usará para el cálculo de días restantes.</p>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs">TE (texto)</Label>
+              <Input value={teTexto} onChange={e => setTeTexto(e.target.value)} placeholder="3 SEMANAS" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">TE (días)</Label>
+              <Input type="number" value={teDias} onChange={e => setTeDias(e.target.value)} placeholder="21" />
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
+          <Button onClick={submit}>Guardar</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
