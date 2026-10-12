@@ -24,7 +24,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { useToast } from '@/hooks/use-toast'
 import {
-  RefreshCw, Plus, Pencil, Trash2, CalendarClock, Download, Search, GitBranch, CalendarDays,
+  RefreshCw, Plus, Pencil, Trash2, CalendarClock, Download, Search, GitBranch, CalendarDays, MoreVertical,
 } from 'lucide-react'
 import { formatDateTime, formatDate } from '@/lib/time-tracking'
 
@@ -189,24 +189,24 @@ export function PvsTab({
     <div className="space-y-4">
       {/* Filters */}
       <Card>
-        <CardContent className="pt-4 pb-3">
-          <div className="flex flex-wrap gap-3 items-end">
-            <div className="flex-1 min-w-[200px]">
+        <CardContent className="pt-3 sm:pt-4 pb-3">
+          <div className="flex flex-wrap gap-2 sm:gap-3 items-end">
+            <div className="flex-1 min-w-[140px] sm:min-w-[200px]">
               <Label className="text-xs mb-1.5 block">Buscar</Label>
               <div className="relative">
                 <Search className="h-4 w-4 absolute left-2.5 top-2.5 text-muted-foreground" />
                 <Input
                   value={search}
                   onChange={e => setSearch(e.target.value)}
-                  placeholder="PV, concepto, cliente, clave..."
-                  className="pl-8"
+                  placeholder="PV, concepto, cliente..."
+                  className="pl-8 h-9"
                 />
               </div>
             </div>
-            <div className="w-[160px]">
+            <div className="w-[130px] sm:w-[160px]">
               <Label className="text-xs mb-1.5 block">Estado</Label>
               <Select value={estadoFilter} onValueChange={setEstadoFilter}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Todos</SelectItem>
                   <SelectItem value="Entregado">Entregado</SelectItem>
@@ -218,10 +218,10 @@ export function PvsTab({
                 </SelectContent>
               </Select>
             </div>
-            <div className="w-[180px]">
+            <div className="w-[130px] sm:w-[180px]">
               <Label className="text-xs mb-1.5 block">Envío</Label>
               <Select value={shippingFilter} onValueChange={setShippingFilter}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Todos</SelectItem>
                   <SelectItem value="none">Sin envío</SelectItem>
@@ -231,15 +231,15 @@ export function PvsTab({
                 </SelectContent>
               </Select>
             </div>
-            <Button variant="ghost" size="sm" onClick={() => { setSearch(''); setEstadoFilter('all'); setShippingFilter('all') }}>
+            <Button variant="ghost" size="sm" className="h-9" onClick={() => { setSearch(''); setEstadoFilter('all'); setShippingFilter('all') }}>
               Limpiar
             </Button>
             <div className="ml-auto flex gap-2">
-              <Button variant="outline" size="sm" onClick={exportCSV}>
+              <Button variant="outline" size="sm" className="h-9" onClick={exportCSV}>
                 <Download className="h-4 w-4" />
                 <span className="hidden sm:inline ml-1.5">CSV</span>
               </Button>
-              <Button size="sm" onClick={() => { setEditing(null); setCreateOpen(true) }}>
+              <Button size="sm" className="h-9" onClick={() => { setEditing(null); setCreateOpen(true) }}>
                 <Plus className="h-4 w-4" />
                 <span className="hidden sm:inline ml-1.5">Agregar</span>
               </Button>
@@ -258,23 +258,24 @@ export function PvsTab({
         </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-x-auto max-h-[70vh] overflow-y-auto">
-            <Table className="w-full min-w-[1400px]">
+            {/* Desktop/tablet: full table */}
+            <Table className="w-full min-w-[1100px] lg:min-w-0">
               <TableHeader className="sticky top-0 bg-background z-10">
                 <TableRow>
-                  <TableHead className="w-[100px] min-w-[100px]">PV</TableHead>
-                  <TableHead className="w-[40px] min-w-[40px]">#</TableHead>
-                  <TableHead className="min-w-[300px]">Concepto</TableHead>
-                  <TableHead className="min-w-[200px]">Cliente</TableHead>
-                  <TableHead className="w-[70px] min-w-[70px] text-right">Cant.</TableHead>
-                  <TableHead className="w-[100px] min-w-[100px]">Fecha PV</TableHead>
-                  <TableHead className="w-[110px] min-w-[110px]">TE</TableHead>
-                  <TableHead className="w-[100px] min-w-[100px]">Entrega est.</TableHead>
-                  <TableHead className="w-[80px] min-w-[80px] text-center">Días</TableHead>
-                  <TableHead className="w-[110px] min-w-[110px]">Estado</TableHead>
-                  <TableHead className="w-[100px] min-w-[100px]">Fecha envío</TableHead>
-                  <TableHead className="w-[110px] min-w-[110px]">Status envío</TableHead>
-                  <TableHead className="min-w-[140px]">Guía</TableHead>
-                  <TableHead className="w-[80px] min-w-[80px] text-right">Acciones</TableHead>
+                  <TableHead className="w-[90px]">PV</TableHead>
+                  <TableHead className="w-[36px]">#</TableHead>
+                  <TableHead className="min-w-[200px]">Concepto</TableHead>
+                  <TableHead className="min-w-[140px] hidden md:table-cell">Cliente</TableHead>
+                  <TableHead className="w-[60px] text-right">Cant.</TableHead>
+                  <TableHead className="w-[90px] hidden sm:table-cell">Fecha PV</TableHead>
+                  <TableHead className="w-[90px] hidden lg:table-cell">TE</TableHead>
+                  <TableHead className="w-[90px]">Entrega est.</TableHead>
+                  <TableHead className="w-[60px] text-center">Días</TableHead>
+                  <TableHead className="w-[100px]">Estado</TableHead>
+                  <TableHead className="w-[90px] hidden md:table-cell">Fecha envío</TableHead>
+                  <TableHead className="w-[90px] hidden sm:table-cell">Status envío</TableHead>
+                  <TableHead className="min-w-[100px] hidden lg:table-cell">Guía</TableHead>
+                  <TableHead className="w-[44px] text-right">Acc.</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -283,20 +284,22 @@ export function PvsTab({
                     <TableCell className="font-mono text-xs font-semibold whitespace-nowrap">{it.pvNumber}</TableCell>
                     <TableCell className="font-mono text-xs text-muted-foreground whitespace-nowrap">{it.itemLine}</TableCell>
                     <TableCell>
-                      <div className="whitespace-normal break-words">{it.concepto}</div>
+                      <div className="whitespace-normal break-words text-sm">{it.concepto}</div>
                       {it.clave && (
                         <div className="text-[10px] text-muted-foreground font-mono whitespace-nowrap">{it.clave}</div>
                       )}
+                      {/* Mobile: show cliente inline */}
+                      <div className="md:hidden text-[10px] text-muted-foreground mt-0.5">{it.cliente || '—'}</div>
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="hidden md:table-cell">
                       <div className="text-xs whitespace-normal break-words">{it.cliente || '—'}</div>
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
                       <div className="flex flex-col items-end">
-                        <span>{it.cantidad}</span>
+                        <span className="text-sm">{it.cantidad}</span>
                         {it.cantidadEnviada > 0 && it.cantidadEnviada < it.cantidad && (
                           <span className="text-[9px] text-orange-600 dark:text-orange-400 font-bold">
-                            {it.cantidadEnviada}/{it.cantidad} enviadas
+                            {it.cantidadEnviada}/{it.cantidad}
                           </span>
                         )}
                         {it.esParcial && (
@@ -306,13 +309,13 @@ export function PvsTab({
                         )}
                       </div>
                     </TableCell>
-                    <TableCell className="text-xs">{formatDate(it.fechaPv)}</TableCell>
-                    <TableCell className="text-xs">
+                    <TableCell className="text-xs hidden sm:table-cell whitespace-nowrap">{formatDate(it.fechaPv)}</TableCell>
+                    <TableCell className="text-xs hidden lg:table-cell whitespace-nowrap">
                       {it.teTexto ? (
                         <span title={`${it.teDias || 0} días`}>{it.teTexto}</span>
                       ) : '—'}
                     </TableCell>
-                    <TableCell className="text-xs">{formatDate(it.fechaEntregaEstimada)}</TableCell>
+                    <TableCell className="text-xs whitespace-nowrap">{formatDate(it.fechaEntregaEstimada)}</TableCell>
                     <TableCell className="text-center">
                       {it.shippingDate ? (
                         <span className="text-[10px] text-green-600 dark:text-green-400">Enviado</span>
@@ -341,21 +344,23 @@ export function PvsTab({
                         {it.estado}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-xs">{formatDate(it.shippingDate)}</TableCell>
-                    <TableCell>
+                    <TableCell className="text-xs hidden md:table-cell whitespace-nowrap">{formatDate(it.shippingDate)}</TableCell>
+                    <TableCell className="hidden sm:table-cell">
                       {it.shippingStatus ? (
                         <Badge variant="outline" className={`text-[10px] ${SHIPPING_COLORS[it.shippingStatus] || ''}`}>
                           {shippingLabel(it.shippingStatus)}
                         </Badge>
                       ) : '—'}
                     </TableCell>
-                    <TableCell className="text-xs font-mono whitespace-normal break-words">
+                    <TableCell className="text-xs font-mono whitespace-normal break-words hidden lg:table-cell">
                       {it.guia || '—'}
                     </TableCell>
                     <TableCell className="text-right">
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="sm" className="h-7 px-2">···</Button>
+                          <Button variant="ghost" size="icon" className="h-8 w-8 p-0 hover:bg-muted">
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                           <DropdownMenuLabel>Acciones</DropdownMenuLabel>

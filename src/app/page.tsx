@@ -203,20 +203,20 @@ export default function CalidadPage() {
   return (
     <div className="min-h-screen flex flex-col bg-background">
       <header className="border-b sticky top-0 z-30 bg-background/95 backdrop-blur">
-        <div className="container mx-auto px-4 py-2.5 flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-2.5 mr-4">
+        <div className="px-3 sm:px-4 py-2 sm:py-2.5 flex flex-wrap items-center gap-2 sm:gap-3 max-w-[1800px] mx-auto">
+          <div className="flex items-center gap-2 sm:gap-2.5 sm:mr-4">
             <img
               src="/icons/header-logo.png"
               alt="Semain Calidad"
-              className="w-10 h-10 rounded-lg object-contain"
+              className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg object-contain shrink-0"
             />
-            <div>
-              <h1 className="text-lg font-bold leading-tight">Semain · Calidad</h1>
-              <p className="text-xs text-muted-foreground leading-tight">Seguimiento de PV y envíos</p>
+            <div className="min-w-0">
+              <h1 className="text-base sm:text-lg font-bold leading-tight truncate">Semain · Calidad</h1>
+              <p className="text-[10px] sm:text-xs text-muted-foreground leading-tight hidden sm:block">Seguimiento de PV y envíos</p>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 ml-auto">
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 ml-auto">
             <DateRangeFilter value={dateRange} onChange={setDateRange} />
             <input
               ref={fileInputRef}
@@ -230,18 +230,19 @@ export default function CalidadPage() {
               size="sm"
               onClick={() => fileInputRef.current?.click()}
               disabled={importing}
+              className="shrink-0"
             >
               {importing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-              <span className="ml-1.5">{importing ? 'Importando...' : 'Importar Excel'}</span>
+              <span className="ml-1.5 hidden sm:inline">{importing ? 'Importando...' : 'Excel'}</span>
             </Button>
-            <Button onClick={() => runSync(true)} disabled={syncing} size="sm">
+            <Button onClick={() => runSync(true)} disabled={syncing} size="sm" className="shrink-0">
               {syncing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-              <span className="ml-1.5">{syncing ? 'Sincronizando...' : 'Sincronizar'}</span>
+              <span className="ml-1.5 hidden sm:inline">{syncing ? 'Sync...' : 'Sincronizar'}</span>
             </Button>
             {installPrompt && (
-              <Button onClick={handleInstall} variant="default" size="sm" className="bg-[#8DC63F] hover:bg-[#7ab233] text-white">
+              <Button onClick={handleInstall} variant="default" size="sm" className="bg-[#8DC63F] hover:bg-[#7ab233] text-white shrink-0">
                 <Download className="h-4 w-4" />
-                <span className="ml-1.5 hidden sm:inline">Instalar app</span>
+                <span className="ml-1.5 hidden sm:inline">Instalar</span>
               </Button>
             )}
           </div>
@@ -288,9 +289,9 @@ export default function CalidadPage() {
         )}
       </header>
 
-      <main className="container mx-auto px-4 py-6 flex-1">
+      <main className="px-3 sm:px-4 py-4 sm:py-6 flex-1 max-w-[1800px] mx-auto w-full">
         <Tabs value={tab} onValueChange={setTab}>
-          <TabsList className="grid w-full max-w-md grid-cols-2 mb-6">
+          <TabsList className="grid w-full max-w-md grid-cols-2 mb-4 sm:mb-6">
             <TabsTrigger value="pvs" className="gap-1.5">
               <Table2 className="h-4 w-4" />
               PVs
