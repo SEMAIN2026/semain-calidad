@@ -52,7 +52,7 @@ export async function POST() {
     // Load ALL items (to check which PVs already exist)
     const allItemsForAlmacen = await db.calidadItem.findMany({
       where: { parentId: null },
-      select: { id: true, pvNumber: true, embarque: true },
+      select: { id: true, pvNumber: true, embarque: true, source: true, teTexto: true },
     })
 
     // Build set of existing PV digits
@@ -86,54 +86,47 @@ export async function POST() {
     almacenResult.updated = itemsToUpdate.length
 
     // Also UPDATE existing Almacén items that are missing TE/fechaEntregaEstimada
-    // (for items created before the parser was added)
-    const itemsNeedingTeUpdate: { id: string; teTexto: string | null; teDias: number | null; fechaEntregaEstimada: Date | null; cliente: string | null; concepto: string | null }[] = []
+    const itemsNeedingTeUpdate: { id: string; data: any }[] = []
     for (const pv of pvs) {
       const digits = String(pv.pvNumber).replace(/\D/g, '')
       if (!digits) continue
-      // Find existing items for this PV that are from almacen and missing TE
+      // Find existing items for this PV
       const existing = allItemsForAlmacen.find(it => {
         const itDigits = String(it.pvNumber).replace(/\D/g, '')
         return itDigits === digits
       })
-      if (existing && existing.source === 'almacen') {
-        // Check if this item is missing TE info
-        // We need to fetch the full item to check teTexto
-        const fullItem = await db.calidadItem.findUnique({ where: { id: existing.id } })
-        if (fullItem && !fullItem.teTexto) {
-          const parsed = parsePvBody(pv.body, pv.subject)
-          if (parsed.teTexto) {
-            const fechaPv = fullItem.fechaPv || new Date()
-            let fechaEntregaEstimada: Date | null = null
-            if (parsed.teDias !== null && parsed.teDias !== undefined) {
-              fechaEntregaEstimada = new Date(fechaPv)
-              fechaEntregaEstimada.setDate(fechaEntregaEstimada.getDate() + parsed.teDias)
-            }
-            itemsNeedingTeUpdate.push({
-              id: existing.id,
+      // Update if item exists, is from almacen, and is missing TE
+      if (existing && existing.source === 'almacen' && !existing.teTexto) {
+        const parsed = parsePvBody(pv.body, pv.subject)
+        if (parsed.teTexto) {
+          // Get fechaPv from the existing item (need to fetch it)
+          const fullItem = await db.calidadItem.findUnique({
+            where: { id: existing.id },
+            select: { fechaPv: true },
+          })
+          const fechaPv = fullItem?.fechaPv || new Date()
+          let fechaEntregaEstimada: Date | null = null
+          if (parsed.teDias !== null && parsed.teDias !== undefined) {
+            fechaEntregaEstimada = new Date(fechaPv)
+            fechaEntregaEstimada.setDate(fechaEntregaEstimada.getDate() + parsed.teDias)
+          }
+          itemsNeedingTeUpdate.push({
+            id: existing.id,
+            data: {
               teTexto: parsed.teTexto,
               teDias: parsed.teDias,
               fechaEntregaEstimada,
-              cliente: parsed.cliente,
-              concepto: parsed.concepto,
-            })
-          }
+              ...(parsed.cliente ? { cliente: parsed.cliente } : {}),
+              ...(parsed.concepto ? { concepto: parsed.concepto } : {}),
+            },
+          })
         }
       }
     }
 
     // Batch update TE info
     await batchProcess(itemsNeedingTeUpdate, async (u) => {
-      await db.calidadItem.update({
-        where: { id: u.id },
-        data: {
-          teTexto: u.teTexto,
-          teDias: u.teDias,
-          fechaEntregaEstimada: u.fechaEntregaEstimada,
-          ...(u.cliente ? { cliente: u.cliente } : {}),
-          ...(u.concepto ? { concepto: u.concepto } : {}),
-        },
-      })
+      await db.calidadItem.update({ where: { id: u.id }, data: u.data })
     })
 
     // CREATE new items for PVs that don't exist in DB yet
