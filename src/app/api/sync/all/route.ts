@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { fetchPVs } from '@/lib/almacen-client'
+import { parsePvBody } from '@/lib/pv-parser'
 import {
   fetchShippings,
   extractPVReferences,
@@ -84,6 +85,57 @@ export async function POST() {
     })
     almacenResult.updated = itemsToUpdate.length
 
+    // Also UPDATE existing Almacén items that are missing TE/fechaEntregaEstimada
+    // (for items created before the parser was added)
+    const itemsNeedingTeUpdate: { id: string; teTexto: string | null; teDias: number | null; fechaEntregaEstimada: Date | null; cliente: string | null; concepto: string | null }[] = []
+    for (const pv of pvs) {
+      const digits = String(pv.pvNumber).replace(/\D/g, '')
+      if (!digits) continue
+      // Find existing items for this PV that are from almacen and missing TE
+      const existing = allItemsForAlmacen.find(it => {
+        const itDigits = String(it.pvNumber).replace(/\D/g, '')
+        return itDigits === digits
+      })
+      if (existing && existing.source === 'almacen') {
+        // Check if this item is missing TE info
+        // We need to fetch the full item to check teTexto
+        const fullItem = await db.calidadItem.findUnique({ where: { id: existing.id } })
+        if (fullItem && !fullItem.teTexto) {
+          const parsed = parsePvBody(pv.body, pv.subject)
+          if (parsed.teTexto) {
+            const fechaPv = fullItem.fechaPv || new Date()
+            let fechaEntregaEstimada: Date | null = null
+            if (parsed.teDias !== null && parsed.teDias !== undefined) {
+              fechaEntregaEstimada = new Date(fechaPv)
+              fechaEntregaEstimada.setDate(fechaEntregaEstimada.getDate() + parsed.teDias)
+            }
+            itemsNeedingTeUpdate.push({
+              id: existing.id,
+              teTexto: parsed.teTexto,
+              teDias: parsed.teDias,
+              fechaEntregaEstimada,
+              cliente: parsed.cliente,
+              concepto: parsed.concepto,
+            })
+          }
+        }
+      }
+    }
+
+    // Batch update TE info
+    await batchProcess(itemsNeedingTeUpdate, async (u) => {
+      await db.calidadItem.update({
+        where: { id: u.id },
+        data: {
+          teTexto: u.teTexto,
+          teDias: u.teDias,
+          fechaEntregaEstimada: u.fechaEntregaEstimada,
+          ...(u.cliente ? { cliente: u.cliente } : {}),
+          ...(u.concepto ? { concepto: u.concepto } : {}),
+        },
+      })
+    })
+
     // CREATE new items for PVs that don't exist in DB yet
     const newPvsToCreate: any[] = []
     for (const pv of pvs) {
@@ -91,17 +143,28 @@ export async function POST() {
       if (!digits) continue
       // If this PV doesn't exist in our DB, create an item for it
       if (!existingDigitsSet.has(digits)) {
-        // Find max itemLine for this PV (should be 0 since it doesn't exist)
-        const maxLine = allItemsForAlmacen
-          .filter(it => String(it.pvNumber).replace(/\D/g, '') === digits)
-          .reduce((max, it) => Math.max(max, 0), 0)
+        // Parse the body to extract structured data
+        const parsed = parsePvBody(pv.body, pv.subject)
+
+        // Calculate fechaEntregaEstimada = fechaPv + teDias
+        const fechaPv = pv.receivedAt ? new Date(pv.receivedAt) : (pv.createdAt ? new Date(pv.createdAt) : new Date())
+        let fechaEntregaEstimada: Date | null = null
+        if (parsed.teDias !== null && parsed.teDias !== undefined) {
+          fechaEntregaEstimada = new Date(fechaPv)
+          fechaEntregaEstimada.setDate(fechaEntregaEstimada.getDate() + parsed.teDias)
+        }
 
         newPvsToCreate.push({
           pvNumber: pv.pvNumber,
           itemLine: 1,
-          concepto: pv.subject || pv.body?.slice(0, 200) || `(PV ${pv.pvNumber})`,
+          cliente: parsed.cliente,
+          concepto: parsed.concepto || pv.subject || `(PV ${pv.pvNumber})`,
           cantidad: 1,
-          fechaPv: pv.receivedAt ? new Date(pv.receivedAt) : (pv.createdAt ? new Date(pv.createdAt) : new Date()),
+          fechaPv,
+          fechaInicio: fechaPv,
+          teTexto: parsed.teTexto,
+          teDias: parsed.teDias,
+          fechaEntregaEstimada,
           estado: 'EN TIEMPO',
           source: 'almacen',
           isManual: false,
