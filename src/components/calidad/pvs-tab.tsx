@@ -25,6 +25,7 @@ import {
 import { useToast } from '@/hooks/use-toast'
 import {
   RefreshCw, Plus, Pencil, Trash2, CalendarClock, Download, Search, GitBranch, CalendarDays, MoreVertical, Filter,
+  ArrowUp, ArrowDown,
 } from 'lucide-react'
 import { formatDateTime, formatDate } from '@/lib/time-tracking'
 
@@ -99,6 +100,8 @@ export function PvsTab({
   const [sourceFilter, setSourceFilter] = useState<string>('all')
   const [parcialFilter, setParcialFilter] = useState<string>('all')
   const [showMoreFilters, setShowMoreFilters] = useState(false)
+  const [sortCol, setSortCol] = useState<string | null>(null)
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
   const [editOpen, setEditOpen] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [refreshOpen, setRefreshOpen] = useState(false)
@@ -141,11 +144,60 @@ export function PvsTab({
     })
   }, [items, search, estadoFilter, shippingFilter, clienteFilter, sourceFilter, parcialFilter])
 
+  // Sorting
+  const handleSort = (col: string) => {
+    if (sortCol === col) {
+      setSortDir(sortDir === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortCol(col)
+      setSortDir('asc')
+    }
+  }
+
+  const sorted = useMemo(() => {
+    if (!sortCol) return filtered
+    const sortedArr = [...filtered]
+    sortedArr.sort((a: any, b: any) => {
+      let aVal = a[sortCol]
+      let bVal = b[sortCol]
+      // Handle special columns
+      if (sortCol === 'daysRemaining') {
+        aVal = a.daysRemaining === null ? -9999 : a.daysRemaining
+        bVal = b.daysRemaining === null ? -9999 : b.daysRemaining
+      }
+      // Null/undefined handling
+      if (aVal == null && bVal == null) return 0
+      if (aVal == null) return sortDir === 'asc' ? 1 : -1
+      if (bVal == null) return sortDir === 'asc' ? -1 : 1
+      // Date comparison
+      if (aVal instanceof Date && bVal instanceof Date) {
+        return sortDir === 'asc' ? aVal.getTime() - bVal.getTime() : bVal.getTime() - aVal.getTime()
+      }
+      // String dates (ISO strings from API)
+      if (typeof aVal === 'string' && /^\d{4}-\d{2}-\d{2}/.test(aVal) && typeof bVal === 'string' && /^\d{4}-\d{2}-\d{2}/.test(bVal)) {
+        const aTime = new Date(aVal).getTime()
+        const bTime = new Date(bVal).getTime()
+        return sortDir === 'asc' ? aTime - bTime : bTime - aTime
+      }
+      // Number comparison
+      if (typeof aVal === 'number' && typeof bVal === 'number') {
+        return sortDir === 'asc' ? aVal - bVal : bVal - aVal
+      }
+      // String comparison
+      const aStr = String(aVal).toLowerCase()
+      const bStr = String(bVal).toLowerCase()
+      if (aStr < bStr) return sortDir === 'asc' ? -1 : 1
+      if (aStr > bStr) return sortDir === 'asc' ? 1 : -1
+      return 0
+    })
+    return sortedArr
+  }, [filtered, sortCol, sortDir])
+
   // Pagination
   const PAGE_SIZE = 50
   const [page, setPage] = useState(1)
-  const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
-  const paginated = useMemo(() => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [filtered, page])
+  const totalPages = Math.ceil(sorted.length / PAGE_SIZE)
+  const paginated = useMemo(() => sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [sorted, page])
 
   // Reset page when filters change
   useEffect(() => {
@@ -363,19 +415,45 @@ export function PvsTab({
             <Table className="w-full min-w-[1100px] lg:min-w-0">
               <TableHeader className="sticky top-0 bg-background z-10">
                 <TableRow>
-                  <TableHead className="w-[90px]">PV</TableHead>
-                  <TableHead className="w-[36px]">#</TableHead>
-                  <TableHead className="min-w-[200px]">Concepto</TableHead>
-                  <TableHead className="min-w-[140px] hidden md:table-cell">Cliente</TableHead>
-                  <TableHead className="w-[60px] text-right">Cant.</TableHead>
-                  <TableHead className="w-[90px] hidden sm:table-cell">Fecha PV</TableHead>
-                  <TableHead className="w-[90px] hidden lg:table-cell">TE</TableHead>
-                  <TableHead className="w-[90px]">Entrega est.</TableHead>
-                  <TableHead className="w-[60px] text-center">Días</TableHead>
-                  <TableHead className="w-[100px]">Estado</TableHead>
-                  <TableHead className="w-[90px] hidden md:table-cell">Fecha envío</TableHead>
-                  <TableHead className="w-[90px] hidden sm:table-cell">Status envío</TableHead>
-                  <TableHead className="min-w-[100px] hidden lg:table-cell">Guía</TableHead>
+                  <TableHead className="w-[90px] cursor-pointer select-none hover:bg-muted/50" onClick={() => handleSort('pvNumber')}>
+                    <span className="inline-flex items-center gap-1">PV {sortCol === 'pvNumber' && (sortDir === 'asc' ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)}</span>
+                  </TableHead>
+                  <TableHead className="w-[36px] cursor-pointer select-none hover:bg-muted/50" onClick={() => handleSort('itemLine')}>
+                    <span className="inline-flex items-center gap-1"># {sortCol === 'itemLine' && (sortDir === 'asc' ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)}</span>
+                  </TableHead>
+                  <TableHead className="min-w-[200px] cursor-pointer select-none hover:bg-muted/50" onClick={() => handleSort('concepto')}>
+                    <span className="inline-flex items-center gap-1">Concepto {sortCol === 'concepto' && (sortDir === 'asc' ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)}</span>
+                  </TableHead>
+                  <TableHead className="min-w-[140px] hidden md:table-cell cursor-pointer select-none hover:bg-muted/50" onClick={() => handleSort('cliente')}>
+                    <span className="inline-flex items-center gap-1">Cliente {sortCol === 'cliente' && (sortDir === 'asc' ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)}</span>
+                  </TableHead>
+                  <TableHead className="w-[60px] text-right cursor-pointer select-none hover:bg-muted/50" onClick={() => handleSort('cantidad')}>
+                    <span className="inline-flex items-center gap-1">Cant. {sortCol === 'cantidad' && (sortDir === 'asc' ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)}</span>
+                  </TableHead>
+                  <TableHead className="w-[90px] hidden sm:table-cell cursor-pointer select-none hover:bg-muted/50" onClick={() => handleSort('fechaPv')}>
+                    <span className="inline-flex items-center gap-1">Fecha PV {sortCol === 'fechaPv' && (sortDir === 'asc' ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)}</span>
+                  </TableHead>
+                  <TableHead className="w-[90px] hidden lg:table-cell cursor-pointer select-none hover:bg-muted/50" onClick={() => handleSort('teTexto')}>
+                    <span className="inline-flex items-center gap-1">TE {sortCol === 'teTexto' && (sortDir === 'asc' ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)}</span>
+                  </TableHead>
+                  <TableHead className="w-[90px] cursor-pointer select-none hover:bg-muted/50" onClick={() => handleSort('fechaEntregaEstimada')}>
+                    <span className="inline-flex items-center gap-1">Entrega est. {sortCol === 'fechaEntregaEstimada' && (sortDir === 'asc' ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)}</span>
+                  </TableHead>
+                  <TableHead className="w-[60px] text-center cursor-pointer select-none hover:bg-muted/50" onClick={() => handleSort('daysRemaining')}>
+                    <span className="inline-flex items-center gap-1">Días {sortCol === 'daysRemaining' && (sortDir === 'asc' ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)}</span>
+                  </TableHead>
+                  <TableHead className="w-[100px] cursor-pointer select-none hover:bg-muted/50" onClick={() => handleSort('estado')}>
+                    <span className="inline-flex items-center gap-1">Estado {sortCol === 'estado' && (sortDir === 'asc' ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)}</span>
+                  </TableHead>
+                  <TableHead className="w-[90px] hidden md:table-cell cursor-pointer select-none hover:bg-muted/50" onClick={() => handleSort('shippingDate')}>
+                    <span className="inline-flex items-center gap-1">Fecha envío {sortCol === 'shippingDate' && (sortDir === 'asc' ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)}</span>
+                  </TableHead>
+                  <TableHead className="w-[90px] hidden sm:table-cell cursor-pointer select-none hover:bg-muted/50" onClick={() => handleSort('shippingStatus')}>
+                    <span className="inline-flex items-center gap-1">Status envío {sortCol === 'shippingStatus' && (sortDir === 'asc' ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)}</span>
+                  </TableHead>
+                  <TableHead className="min-w-[100px] hidden lg:table-cell cursor-pointer select-none hover:bg-muted/50" onClick={() => handleSort('guia')}>
+                    <span className="inline-flex items-center gap-1">Guía {sortCol === 'guia' && (sortDir === 'asc' ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />)}</span>
+                  </TableHead>
                   <TableHead className="w-[44px] text-right">Acc.</TableHead>
                 </TableRow>
               </TableHeader>
