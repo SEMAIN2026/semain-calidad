@@ -24,7 +24,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { useToast } from '@/hooks/use-toast'
 import {
-  RefreshCw, Plus, Pencil, Trash2, CalendarClock, Download, Search, GitBranch, CalendarDays, MoreVertical,
+  RefreshCw, Plus, Pencil, Trash2, CalendarClock, Download, Search, GitBranch, CalendarDays, MoreVertical, Filter,
 } from 'lucide-react'
 import { formatDateTime, formatDate } from '@/lib/time-tracking'
 
@@ -95,6 +95,10 @@ export function PvsTab({
   const [search, setSearch] = useState('')
   const [estadoFilter, setEstadoFilter] = useState<string>('all')
   const [shippingFilter, setShippingFilter] = useState<string>('all')
+  const [clienteFilter, setClienteFilter] = useState<string>('all')
+  const [sourceFilter, setSourceFilter] = useState<string>('all')
+  const [parcialFilter, setParcialFilter] = useState<string>('all')
+  const [showMoreFilters, setShowMoreFilters] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [refreshOpen, setRefreshOpen] = useState(false)
@@ -106,6 +110,13 @@ export function PvsTab({
   const [partialTarget, setPartialTarget] = useState<CalidadItem | null>(null)
   const [entregaTarget, setEntregaTarget] = useState<CalidadItem | null>(null)
 
+  // Get unique clients for the dropdown
+  const uniqueClientes = useMemo(() => {
+    const set = new Set<string>()
+    items.forEach(it => { if (it.cliente) set.add(it.cliente) })
+    return Array.from(set).sort()
+  }, [items])
+
   const filtered = useMemo(() => {
     return items.filter(it => {
       if (estadoFilter !== 'all' && it.estado !== estadoFilter) return false
@@ -113,14 +124,22 @@ export function PvsTab({
         if (shippingFilter === 'none' && it.shippingStatus) return false
         if (shippingFilter !== 'none' && it.shippingStatus !== shippingFilter) return false
       }
+      if (clienteFilter !== 'all' && it.cliente !== clienteFilter) return false
+      if (sourceFilter !== 'all' && it.source !== sourceFilter) return false
+      if (parcialFilter !== 'all') {
+        if (parcialFilter === 'parcial' && !it.esParcial) return false
+        if (parcialFilter === 'normal' && it.esParcial) return false
+        if (parcialFilter === 'padre' && it.parentId) return false
+        if (parcialFilter === 'hijo' && !it.parentId) return false
+      }
       if (search) {
         const q = search.toLowerCase()
-        const blob = `${it.pvNumber} ${it.concepto} ${it.cliente || ''} ${it.clave || ''} ${it.notes || ''}`.toLowerCase()
+        const blob = `${it.pvNumber} ${it.concepto} ${it.cliente || ''} ${it.clave || ''} ${it.notes || ''} ${it.teTexto || ''} ${it.guia || ''} ${it.paqueteria || ''}`.toLowerCase()
         if (!blob.includes(q)) return false
       }
       return true
     })
-  }, [items, search, estadoFilter, shippingFilter])
+  }, [items, search, estadoFilter, shippingFilter, clienteFilter, sourceFilter, parcialFilter])
 
   // Pagination
   const PAGE_SIZE = 50
@@ -131,7 +150,7 @@ export function PvsTab({
   // Reset page when filters change
   useEffect(() => {
     setPage(1)
-  }, [search, estadoFilter, shippingFilter])
+  }, [search, estadoFilter, shippingFilter, clienteFilter, sourceFilter, parcialFilter])
 
   const handleDelete = async () => {
     if (!deleteId) return
@@ -209,7 +228,7 @@ export function PvsTab({
                 <Input
                   value={search}
                   onChange={e => setSearch(e.target.value)}
-                  placeholder="PV, concepto, cliente..."
+                  placeholder="PV, concepto, cliente, clave, TE, guía..."
                   className="pl-8 h-9"
                 />
               </div>
@@ -242,7 +261,19 @@ export function PvsTab({
                 </SelectContent>
               </Select>
             </div>
-            <Button variant="ghost" size="sm" className="h-9" onClick={() => { setSearch(''); setEstadoFilter('all'); setShippingFilter('all') }}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9"
+              onClick={() => setShowMoreFilters(!showMoreFilters)}
+            >
+              <Filter className="h-3.5 w-3.5 mr-1" />
+              <span className="text-xs">Más filtros</span>
+            </Button>
+            <Button variant="ghost" size="sm" className="h-9" onClick={() => {
+              setSearch(''); setEstadoFilter('all'); setShippingFilter('all')
+              setClienteFilter('all'); setSourceFilter('all'); setParcialFilter('all')
+            }}>
               Limpiar
             </Button>
             <div className="ml-auto flex gap-2">
@@ -256,6 +287,50 @@ export function PvsTab({
               </Button>
             </div>
           </div>
+
+          {/* More filters (collapsible) */}
+          {showMoreFilters && (
+            <div className="flex flex-wrap gap-2 sm:gap-3 items-end mt-3 pt-3 border-t">
+              <div className="w-full sm:w-[220px]">
+                <Label className="text-xs mb-1.5 block">Cliente</Label>
+                <Select value={clienteFilter} onValueChange={setClienteFilter}>
+                  <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos los clientes</SelectItem>
+                    {uniqueClientes.map(c => (
+                      <SelectItem key={c} value={c}>{c}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="w-[130px] sm:w-[150px]">
+                <Label className="text-xs mb-1.5 block">Origen</Label>
+                <Select value={sourceFilter} onValueChange={setSourceFilter}>
+                  <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos</SelectItem>
+                    <SelectItem value="excel">Excel</SelectItem>
+                    <SelectItem value="almacen">Almacén</SelectItem>
+                    <SelectItem value="manual">Manual</SelectItem>
+                    <SelectItem value="partial">Parcial</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="w-[130px] sm:w-[150px]">
+                <Label className="text-xs mb-1.5 block">Tipo</Label>
+                <Select value={parcialFilter} onValueChange={setParcialFilter}>
+                  <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todos</SelectItem>
+                    <SelectItem value="normal">Normales</SelectItem>
+                    <SelectItem value="parcial">Con parcial</SelectItem>
+                    <SelectItem value="padre">Padres</SelectItem>
+                    <SelectItem value="hijo">Hijos (restantes)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
